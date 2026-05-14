@@ -239,6 +239,12 @@ static t_config_enum_values s_keys_map_IroningType {
     { "topmost",        int(IroningType::TopmostOnly) },
     { "solid",          int(IroningType::AllSolid) }
 };
+static t_config_enum_values s_keys_map_BridgeBottomSurfacePattern {
+    { "rectilinear", bbspRectilinear },
+    { "concentric",  bbspConcentric  },
+};
+CONFIG_OPTION_ENUM_DEFINE_STATIC_MAPS(BridgeBottomSurfacePattern)
+
 CONFIG_OPTION_ENUM_DEFINE_STATIC_MAPS(IroningType)
 
 //BBS:
@@ -1870,11 +1876,25 @@ void PrintConfigDef::init_fff_params()
     def = this->add("bottom_surface_pattern", coEnum);
     def->label = L("Bottom surface pattern");
     def->category = L("Strength");
-    def->tooltip = L("Line pattern of bottom surface infill, not bridge infill");
+    def->tooltip = L("Line pattern of bottom surface infill");
     def->enum_keys_map = &ConfigOptionEnum<InfillPattern>::get_enum_values();
     def->enum_values = def_top_fill_pattern->enum_values;
     def->enum_labels = def_top_fill_pattern->enum_labels;
     def->set_default_value(new ConfigOptionEnum<InfillPattern>(ipRectilinear));
+
+    def = this->add("bridge_bottom_surface_pattern", coEnum);
+    def->label = L("Bridge bottom surface pattern");
+    def->category = L("Strength");
+    def->tooltip = L("Line pattern for the underside of bridges (surfaces printed over support material). "
+                     "Rectilinear uses the standard bridge infill direction. "
+                     "Concentric prints rings from the outside inward. Bridge flow is used in both cases.");
+    def->enum_keys_map = &ConfigOptionEnum<BridgeBottomSurfacePattern>::get_enum_values();
+    def->enum_values.push_back("rectilinear");
+    def->enum_values.push_back("concentric");
+    def->enum_labels.push_back(L("Rectilinear"));
+    def->enum_labels.push_back(L("Concentric"));
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionEnum<BridgeBottomSurfacePattern>(bbspRectilinear));
 
     def           = this->add("bottom_surface_density", coPercent);
     def->label    = L("Bottom surface density");
