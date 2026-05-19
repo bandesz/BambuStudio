@@ -185,6 +185,14 @@ enum class SeamScarfType {
     All,
 };
 
+// First-layer perimeter seam start compensation wall-type selector
+enum class FirstLayerSeamCompType {
+    None = 0,
+    Contour,
+    Hole,
+    ContourAndHole,
+};
+
 enum SLAMaterial {
     slamTough,
     slamFlex,
@@ -496,6 +504,7 @@ CONFIG_OPTION_ENUM_DECLARE_STATIC_MAPS(SupportMaterialInterfacePattern)
 CONFIG_OPTION_ENUM_DECLARE_STATIC_MAPS(SupportType)
 CONFIG_OPTION_ENUM_DECLARE_STATIC_MAPS(SeamPosition)
 CONFIG_OPTION_ENUM_DECLARE_STATIC_MAPS(SeamScarfType)
+CONFIG_OPTION_ENUM_DECLARE_STATIC_MAPS(FirstLayerSeamCompType)
 CONFIG_OPTION_ENUM_DECLARE_STATIC_MAPS(SLADisplayOrientation)
 CONFIG_OPTION_ENUM_DECLARE_STATIC_MAPS(SLAPillarConnectionMode)
 CONFIG_OPTION_ENUM_DECLARE_STATIC_MAPS(BrimType)
@@ -1003,7 +1012,12 @@ PRINT_CONFIG_CLASS_DEFINE(
     ((ConfigOptionPercent,            seam_gap))
     ((ConfigOptionPercent,            wipe_speed))
     ((ConfigOptionBool,               role_base_wipe_speed))
-    ((ConfigOptionBool,               precise_z_height)) // BBS
+    ((ConfigOptionBool,                precise_z_height)) // BBS
+
+    // First layer perimeter seam start compensation
+    ((ConfigOptionEnum<FirstLayerSeamCompType>, first_layer_seam_comp_type))
+    ((ConfigOptionFloat,                       first_layer_seam_comp_length))
+    ((ConfigOptionFloat,                       first_layer_seam_comp_width))
 
     ((ConfigOptionBool, interlocking_beam))
     ((ConfigOptionFloat,interlocking_beam_width))

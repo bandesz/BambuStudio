@@ -5335,6 +5335,123 @@ static std::unique_ptr<EdgeGrid::Grid> calculate_layer_edge_grid(const Layer& la
     return out;
 }
 
+// Apply a laterally decreasing offset to the first `comp_length_mm` of the
+// perimeter path so the startup over-extrusion blob is pushed inward (toward
+// the object interior).
+//
+// The required offset direction depends on the ACTUAL traversal direction of the loop
+// (after make_clockwise / make_counter_clockwise has been applied):
+//
+//   CCW contour (is_clockwise=false, is_hole=false): material is to the LEFT  → sign = -1
+//   CCW hole    (is_clockwise=false, is_hole=true) : material is to the RIGHT → sign = +1
+//   CW  contour (is_clockwise=true,  is_hole=false): material is to the RIGHT → sign = +1
+//   CW  hole    (is_clockwise=true,  is_hole=true) : material is to the LEFT  → sign = -1
+//
+// This is simply XOR: (is_hole ^ is_clockwise).
+static void apply_first_layer_seam_comp(
+    ExtrusionPaths &paths,
+    double          comp_length_mm,
+    double          comp_width_mm,
+    bool            is_hole,
+    bool            is_clockwise)
+{
+    if (comp_length_mm <= 0.0 || comp_width_mm <= 0.0 || paths.empty())
+        return;
+
+    constexpr int  RESAMPLE_STEPS  = 10;
+    const double   comp_length     = scale_(comp_length_mm);
+    const double   comp_width      = scale_(comp_width_mm);
+    const double   max_seg         = comp_length / RESAMPLE_STEPS;
+    // Determine lateral offset direction: XOR of is_hole and is_clockwise.
+    // See function comment above for the full truth table.
+    const double   sign            = (is_hole ^ is_clockwise) ? 1.0 : -1.0;
+
+    // Returns the lateral offset vector at cumulative distance d_sc.
+    auto lateral_offset = [&](double d_sc, const Vec2d &dir) -> Vec2d {
+        if (d_sc >= comp_length) return Vec2d::Zero();
+        const double mag = comp_width * (1.0 - d_sc / comp_length);
+        return mag * sign * Vec2d(dir.y(), -dir.x());
+    };
+
+    // Append sub-divisions of segment [a,b] to result, starting at
+    // cumulative distance d_start_sc from the seam.  result already contains
+    // point a; only endpoints are appended.
+    auto process_segment = [&](Polyline &result,
+                               const Vec2d &a, const Vec2d &b,
+                               double d_start_sc) {
+        const Vec2d   seg_vec = b - a;
+        const double  seg_len = seg_vec.norm();
+        if (seg_len < SCALED_EPSILON) {
+            result.append(b.cast<coord_t>());
+            return;
+        }
+        const Vec2d   dir       = seg_vec / seg_len;
+        const double  d_end_sc  = d_start_sc + seg_len;
+
+        if (d_start_sc >= comp_length) {
+            result.append(b.cast<coord_t>());
+            return;
+        }
+        const double  len_in    = std::min(seg_len, comp_length - d_start_sc);
+        const int     n_in      = std::max(1, (int)std::ceil(len_in / max_seg));
+
+        if (d_end_sc <= comp_length) {
+            // Entire segment inside comp region.
+            for (int s = 1; s <= n_in; ++s) {
+                const double t = (double)s / n_in;
+                const double d = d_start_sc + t * seg_len;
+                result.append((a + t * seg_vec + lateral_offset(d, dir)).cast<coord_t>());
+            }
+        } else {
+            // Segment straddles the comp boundary.
+            for (int s = 1; s <= n_in; ++s) {
+                const double t = (double)s / n_in * (len_in / seg_len);
+                const double d = d_start_sc + t * seg_len;
+                result.append((a + t * seg_vec + lateral_offset(d, dir)).cast<coord_t>());
+            }
+            result.append(b.cast<coord_t>());
+        }
+    };
+
+    double accumulated = 0.0;
+
+    for (ExtrusionPath &path : paths) {
+        if (accumulated >= comp_length)
+            break;
+
+        Polyline       &pl = path.polyline;
+        const size_t    n  = pl.points.size();
+        if (n < 2) continue;
+
+        Polyline new_pl;
+        new_pl.points.reserve(n + RESAMPLE_STEPS);
+
+        // First point offset – use outgoing segment direction.
+        {
+            const Vec2d dir = (pl.points[1] - pl.points[0]).cast<double>().normalized();
+            new_pl.append((pl.points[0].cast<double>() + lateral_offset(accumulated, dir)).cast<coord_t>());
+        }
+
+        double path_accum = 0.0;
+        for (size_t i = 0; i + 1 < n; ++i) {
+            const Vec2d a       = pl.points[i].cast<double>();
+            const Vec2d b       = pl.points[i + 1].cast<double>();
+            const double seg_len = (b - a).norm();
+            process_segment(new_pl, a, b, accumulated + path_accum);
+            path_accum += seg_len;
+            if (accumulated + path_accum >= comp_length) {
+                // Append any remaining original points unchanged.
+                for (size_t j = i + 2; j < n; ++j)
+                    new_pl.append(pl.points[j]);
+                break;
+            }
+        }
+
+        accumulated += path_accum;
+        pl = std::move(new_pl);
+    }
+}
+
 static bool has_overhang_path_on_slope(const ExtrusionLoop &loop, double slope_length)
 {
     double count_length = 0.0;
@@ -5489,6 +5606,26 @@ std::string GCode::extrude_loop(ExtrusionLoop loop, std::string description, dou
     }
     loop.clip_end(clip_length, &paths);
     if (paths.empty()) return "";
+
+    // Apply first layer seam start compensation (XY offset).
+    // Skirt and brim are not object perimeters, so compensation must not be applied to them.
+    if (on_first_layer() && loop.role() != erSkirt && loop.role() != erBrim) {
+        const int comp_type = int(m_config.first_layer_seam_comp_type.value);
+        if (comp_type != int(FirstLayerSeamCompType::None)) {
+            const bool apply_contour = (comp_type == int(FirstLayerSeamCompType::Contour) ||
+                                        comp_type == int(FirstLayerSeamCompType::ContourAndHole));
+            const bool apply_hole    = (comp_type == int(FirstLayerSeamCompType::Hole) ||
+                                        comp_type == int(FirstLayerSeamCompType::ContourAndHole));
+            if ((!is_hole && apply_contour) || (is_hole && apply_hole)) {
+                apply_first_layer_seam_comp(
+                    paths,
+                    m_config.first_layer_seam_comp_length.value,
+                    m_config.first_layer_seam_comp_width.value,
+                    is_hole,
+                    m_config.print_in_clockwise);
+            }
+        }
+    }
 
     double small_peri_speed=-1;
     // apply the small perimeter speed
