@@ -1870,10 +1870,20 @@ void PrintConfigDef::init_fff_params()
     def = this->add("bottom_surface_pattern", coEnum);
     def->label = L("Bottom surface pattern");
     def->category = L("Strength");
-    def->tooltip = L("Line pattern of bottom surface infill, not bridge infill");
+    def->tooltip = L("Line pattern of bottom surface infill");
     def->enum_keys_map = &ConfigOptionEnum<InfillPattern>::get_enum_values();
     def->enum_values = def_top_fill_pattern->enum_values;
     def->enum_labels = def_top_fill_pattern->enum_labels;
+    def->set_default_value(new ConfigOptionEnum<InfillPattern>(ipRectilinear));
+
+    def = this->add("bridge_bottom_surface_pattern", coEnum);
+    def->label = L("Bridge bottom surface pattern");
+    def->category = L("Strength");
+    def->tooltip = L("Line pattern for the underside of bridges (surfaces printed over support material). Bridge flow is used in all cases.");
+    def->enum_keys_map = &ConfigOptionEnum<InfillPattern>::get_enum_values();
+    def->enum_values = def_top_fill_pattern->enum_values;
+    def->enum_labels = def_top_fill_pattern->enum_labels;
+    def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionEnum<InfillPattern>(ipRectilinear));
 
     def           = this->add("bottom_surface_density", coPercent);

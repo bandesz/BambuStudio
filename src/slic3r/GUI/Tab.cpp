@@ -3005,6 +3005,7 @@ void TabPrint::build()
         optgroup->append_single_option_line("top_shell_thickness");
         optgroup->append_single_option_line("top_color_penetration_layers");
         optgroup->append_single_option_line("bottom_surface_pattern", "fill-patterns#Infill of the top surface and bottom surface");
+        optgroup->append_single_option_line("bridge_bottom_surface_pattern");
         optgroup->append_single_option_line("bottom_surface_density");
         optgroup->append_single_option_line("bottom_shell_layers");
         optgroup->append_single_option_line("bottom_shell_thickness");

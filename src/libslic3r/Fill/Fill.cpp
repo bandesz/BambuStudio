@@ -225,7 +225,6 @@ std::vector<SurfaceFill> group_fills(const Layer &layer, LockRegionParam &lock_p
 
 				if (surface.is_solid()) {
 		            params.density = 100.f;
-					//FIXME for non-thick bridges, shall we allow a bottom surface pattern?
 					if (surface.is_floating_vertical_shell())
 						params.pattern = InfillPattern::ipFloatingConcentric;
 					else if (surface.is_solid_infill())
@@ -233,6 +232,8 @@ std::vector<SurfaceFill> group_fills(const Layer &layer, LockRegionParam &lock_p
                     else if (surface.is_external() && !is_bridge) {
                         params.pattern = surface.is_top() ? region_config.top_surface_pattern.value : region_config.bottom_surface_pattern.value;
                         params.density = surface.is_top() ? region_config.top_surface_density.value : region_config.bottom_surface_density.value;
+                    } else if (surface.surface_type == stBottomBridge) {
+                        params.pattern = region_config.bridge_bottom_surface_pattern.value;
                     } else
 						params.pattern = region_config.top_surface_pattern == ipMonotonic ? ipMonotonic : ipRectilinear;
                     if (params.pattern == ipMonotonicLine) params.monotonic_travel_into_wall = region_config.monotonic_travel_into_wall.value;
