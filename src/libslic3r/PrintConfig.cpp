@@ -4720,6 +4720,15 @@ void PrintConfigDef::init_fff_params()
     def->mode    = comAdvanced;
     def->set_default_value(new ConfigOptionBool(true));
 
+    def          = this->add("seam_slope_apply_on_first_layer", coBool);
+    def->label   = L("Scarf joint on first layer");
+    def->category = L("Quality");
+    def->tooltip = L("Apply scarf joint seam on the first layer. By default, scarf seam is disabled on the first layer "
+                     "to avoid adhesion issues caused by very small extrusion amounts at the ramp start. "
+                     "Enable this if you experience blobs at the seam start on the first layer and have good bed adhesion.");
+    def->mode    = comAdvanced;
+    def->set_default_value(new ConfigOptionBool(false));
+
     def          = this->add("override_filament_scarf_seam_setting", coBool);
     def->label   = L("Override filament scarf seam setting");
     def->category = L("Quality");

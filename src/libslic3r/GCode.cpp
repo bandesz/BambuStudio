@@ -5469,7 +5469,7 @@ std::string GCode::extrude_loop(ExtrusionLoop loop, std::string description, dou
                                     !m_config.spiral_mode &&
                                     (loop.role() == erExternalPerimeter ||
                                     (loop.role() == erPerimeter && m_config.seam_slope_inner_walls)) &&
-                                    !on_first_layer();
+                                    (!on_first_layer() || m_config.seam_slope_apply_on_first_layer);
 
     if (enable_seam_slope && m_config.seam_slope_conditional.value) {
         //BBS: the seam has been decide, only check the seam position angle

@@ -2932,6 +2932,7 @@ void TabPrint::build()
         optgroup->append_single_option_line("seam_slope_entire_loop", "Seam");
         optgroup->append_single_option_line("seam_slope_steps", "Seam");
         optgroup->append_single_option_line("seam_slope_inner_walls", "Seam");
+        optgroup->append_single_option_line("seam_slope_apply_on_first_layer", "Seam");
         optgroup->append_single_option_line("override_filament_scarf_seam_setting", "Seam");
         optgroup->append_single_option_line("seam_slope_type", "Seam");
         optgroup->append_single_option_line("seam_slope_start_height", "Seam");

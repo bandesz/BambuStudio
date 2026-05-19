@@ -1134,6 +1134,7 @@ PRINT_CONFIG_CLASS_DEFINE(
     ((ConfigOptionFloat,                seam_slope_min_length))
     ((ConfigOptionInt,                  seam_slope_steps))
     ((ConfigOptionBool,                 seam_slope_inner_walls))
+    ((ConfigOptionBool,                 seam_slope_apply_on_first_layer))
     ((ConfigOptionBool,                 embedding_wall_into_infill))
 )
 

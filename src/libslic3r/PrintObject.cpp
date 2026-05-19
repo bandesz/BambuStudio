@@ -1337,6 +1337,7 @@ bool PrintObject::invalidate_state_by_config_options(
             || opt_key == "seam_slope_entire_loop"
             || opt_key == "seam_slope_steps"
             || opt_key == "seam_slope_inner_walls"
+            || opt_key == "seam_slope_apply_on_first_layer"
             || opt_key == "seam_gap"
             || opt_key == "wipe_speed"
             || opt_key == "role_base_wipe_speed"
