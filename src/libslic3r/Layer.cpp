@@ -193,7 +193,6 @@ bool Layer::has_compatible_layer_regions(const PrintRegionConfig &config, const 
            && config.seam_slope_entire_loop == other_config.seam_slope_entire_loop
            && config.seam_slope_steps == other_config.seam_slope_steps
            && config.seam_slope_inner_walls == other_config.seam_slope_inner_walls
-           && config.seam_slope_apply_on_first_layer == other_config.seam_slope_apply_on_first_layer
            && (this->id() != 0 || config.initial_layer_flow_ratio == other_config.initial_layer_flow_ratio);
 }
 

@@ -2932,7 +2932,6 @@ void TabPrint::build()
         optgroup->append_single_option_line("seam_slope_entire_loop", "Seam");
         optgroup->append_single_option_line("seam_slope_steps", "Seam");
         optgroup->append_single_option_line("seam_slope_inner_walls", "Seam");
-        optgroup->append_single_option_line("seam_slope_apply_on_first_layer", "Seam");
         optgroup->append_single_option_line("override_filament_scarf_seam_setting", "Seam");
         optgroup->append_single_option_line("seam_slope_type", "Seam");
         optgroup->append_single_option_line("seam_slope_start_height", "Seam");
@@ -2951,6 +2950,9 @@ void TabPrint::build()
         optgroup->append_single_option_line("circle_compensation_manual_offset");
 
         optgroup->append_single_option_line("elefant_foot_compensation", "parameter/elephant-foot");
+        optgroup->append_single_option_line("first_layer_seam_comp_type", "parameter/elephant-foot");
+        optgroup->append_single_option_line("first_layer_seam_comp_length", "parameter/elephant-foot");
+        optgroup->append_single_option_line("first_layer_seam_comp_width", "parameter/elephant-foot");
         optgroup->append_single_option_line("precise_outer_wall");
         optgroup->append_single_option_line("precise_z_height");
 

@@ -344,6 +344,14 @@ static t_config_enum_values s_keys_map_SeamScarfType{
 };
 CONFIG_OPTION_ENUM_DEFINE_STATIC_MAPS(SeamScarfType)
 
+static t_config_enum_values s_keys_map_FirstLayerSeamCompType{
+    {"none",             int(FirstLayerSeamCompType::None)},
+    {"contour",          int(FirstLayerSeamCompType::Contour)},
+    {"hole",             int(FirstLayerSeamCompType::Hole)},
+    {"contour_and_hole", int(FirstLayerSeamCompType::ContourAndHole)},
+};
+CONFIG_OPTION_ENUM_DEFINE_STATIC_MAPS(FirstLayerSeamCompType)
+
 static const t_config_enum_values s_keys_map_SLADisplayOrientation = {
     { "landscape",      sladoLandscape},
     { "portrait",       sladoPortrait}
@@ -797,6 +805,44 @@ void PrintConfigDef::init_common_params()
     def->min = 0;
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionFloat(0.));
+
+    def                = this->add("first_layer_seam_comp_type", coEnum);
+    def->label         = L("First layer seam start compensation");
+    def->category      = L("Quality");
+    def->tooltip       = L("Laterally offset the beginning of each first-layer perimeter path so the startup "
+                           "over-extrusion blob is pushed away from the visible wall surface. "
+                           "The offset decreases linearly from the configured width back to zero over the configured length.");
+    def->enum_keys_map = &ConfigOptionEnum<FirstLayerSeamCompType>::get_enum_values();
+    def->enum_values.push_back("none");
+    def->enum_values.push_back("contour");
+    def->enum_values.push_back("hole");
+    def->enum_values.push_back("contour_and_hole");
+    def->enum_labels.push_back(L("None"));
+    def->enum_labels.push_back(L("Contour"));
+    def->enum_labels.push_back(L("Hole"));
+    def->enum_labels.push_back(L("Contour and hole"));
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionEnum<FirstLayerSeamCompType>(FirstLayerSeamCompType::None));
+
+    def           = this->add("first_layer_seam_comp_length", coFloat);
+    def->label    = L("First layer seam compensation length");
+    def->category = L("Quality");
+    def->tooltip  = L("Length of the perimeter path over which the lateral start compensation is applied. "
+                      "The offset starts at its maximum and decreases linearly to zero over this distance.");
+    def->sidetext = L("mm");
+    def->min      = 0;
+    def->mode     = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(3.0));
+
+    def           = this->add("first_layer_seam_comp_width", coFloat);
+    def->label    = L("First layer seam compensation width");
+    def->category = L("Quality");
+    def->tooltip  = L("Maximum lateral offset applied at the very start of the first-layer perimeter path. "
+                      "For contours the path is shifted outward; for holes it is shifted toward the hole interior.");
+    def->sidetext = L("mm");
+    def->min      = 0;
+    def->mode     = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(1.0));
 
     def = this->add("layer_height", coFloat);
     def->label = L("Layer height");
@@ -4719,15 +4765,6 @@ void PrintConfigDef::init_fff_params()
     def->tooltip = L("Use scarf joint for inner walls as well.");
     def->mode    = comAdvanced;
     def->set_default_value(new ConfigOptionBool(true));
-
-    def          = this->add("seam_slope_apply_on_first_layer", coBool);
-    def->label   = L("Scarf joint on first layer");
-    def->category = L("Quality");
-    def->tooltip = L("Apply scarf joint seam on the first layer. By default, scarf seam is disabled on the first layer "
-                     "to avoid adhesion issues caused by very small extrusion amounts at the ramp start. "
-                     "Enable this if you experience blobs at the seam start on the first layer and have good bed adhesion.");
-    def->mode    = comAdvanced;
-    def->set_default_value(new ConfigOptionBool(false));
 
     def          = this->add("override_filament_scarf_seam_setting", coBool);
     def->label   = L("Override filament scarf seam setting");
