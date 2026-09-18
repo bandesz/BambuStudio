@@ -79,6 +79,8 @@ set(lisbslic3r_sources
     EdgeGrid.hpp
     ElephantFootCompensation.cpp
     ElephantFootCompensation.hpp
+    InsetStart.cpp
+    InsetStart.hpp
     Emboss.cpp
     Emboss.hpp
     EmbossShape.hpp

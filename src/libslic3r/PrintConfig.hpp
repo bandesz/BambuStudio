@@ -978,6 +978,7 @@ PRINT_CONFIG_CLASS_DEFINE(
     ((ConfigOptionInt,                 raft_layers))
     ((ConfigOptionEnum<SeamPosition>,  seam_position))
     ((ConfigOptionBool,                seam_placement_away_from_overhangs))
+    ((ConfigOptionBool,                first_layer_inset_start))
     ((ConfigOptionFloat,               slice_closing_radius))
     ((ConfigOptionEnum<SlicingMode>,   slicing_mode))
     ((ConfigOptionBool,                enable_support))

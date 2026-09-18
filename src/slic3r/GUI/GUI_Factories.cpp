@@ -78,7 +78,7 @@ std::map<std::string, std::vector<SimpleSettingData>>  SettingsFactory::OBJECT_C
     { L("Quality"), {{"layer_height", "",1},
                     //{"initial_layer_print_height", "",2},
                     {"wall_sequence","",2},
-                    {"seam_position", "",3}, {"seam_gap", "",4}, {"wipe_speed", "",5},
+                    {"seam_position", "",3}, {"first_layer_inset_start", "",4}, {"seam_gap", "",5}, {"wipe_speed", "",6},
                     {"slice_closing_radius", "",6}, {"resolution", "",7},
                     {"xy_hole_compensation", "",8}, {"xy_contour_compensation", "",9}, {"elefant_foot_compensation", "",10},
                     {"precise_z_height", "",10}
