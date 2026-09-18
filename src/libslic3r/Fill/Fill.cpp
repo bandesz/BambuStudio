@@ -573,6 +573,42 @@ std::vector<SurfaceFill> group_fills(const Layer &layer, LockRegionParam &lock_p
 		}
 	}
 
+	if (layer.object()->config().detect_narrow_bottom_surface_infill) {
+		const size_t surface_fills_size = surface_fills.size();
+		for (size_t i = 0; i < surface_fills_size; i++) {
+			if (surface_fills[i].surface.surface_type != stBottom)
+				continue;
+			if (surface_fills[i].params.pattern == ipConcentric ||
+			    surface_fills[i].params.pattern == ipConcentricInternal)
+				continue;
+
+			std::vector<size_t> narrow_expoly_idx;
+			for (size_t j = 0; j < surface_fills[i].expolygons.size(); j++) {
+				if (is_narrow_infill_area(surface_fills[i].expolygons[j]))
+					narrow_expoly_idx.emplace_back(j);
+			}
+
+			if (narrow_expoly_idx.empty())
+				continue;
+			else if (narrow_expoly_idx.size() == surface_fills[i].expolygons.size()) {
+				surface_fills[i].params.pattern = ipConcentricInternal;
+			} else {
+				SurfaceFillParams params = surface_fills[i].params;
+				params.pattern = ipConcentricInternal;
+				surface_fills.emplace_back(params);
+				surface_fills.back().region_id = surface_fills[i].region_id;
+				surface_fills.back().surface.surface_type = stBottom;
+				surface_fills.back().surface.thickness = surface_fills[i].surface.thickness;
+				surface_fills.back().region_id_group = surface_fills[i].region_id_group;
+				surface_fills.back().no_overlap_expolygons = surface_fills[i].no_overlap_expolygons;
+				for (size_t j = 0; j < narrow_expoly_idx.size(); j++)
+					surface_fills.back().expolygons.emplace_back(std::move(surface_fills[i].expolygons[narrow_expoly_idx[j]]));
+				for (int j = int(narrow_expoly_idx.size()) - 1; j >= 0; j--)
+					surface_fills[i].expolygons.erase(surface_fills[i].expolygons.begin() + narrow_expoly_idx[j]);
+			}
+		}
+	}
+
 	return surface_fills;
 }
 

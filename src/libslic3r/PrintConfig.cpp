@@ -6564,6 +6564,15 @@ void PrintConfigDef::init_fff_params()
                    " Otherwise, rectilinear pattern is used defaultly.");
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionBool(true));
+
+    def = this->add("detect_narrow_bottom_surface_infill", coBool);
+    def->label = L("Detect narrow bottom surface infill");
+    def->category = L("Strength");
+    def->tooltip = L("This option will auto detect narrow bottom surface infill areas, typically on the first layer. "
+                   "If enabled, a concentric pattern is used for those areas so thin features fill toward the outline. "
+                   "Wide bottom areas keep the Bottom surface pattern.");
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionBool(true));
 }
 
 void PrintConfigDef::init_extruder_option_keys()
