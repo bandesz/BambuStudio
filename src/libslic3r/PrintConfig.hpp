@@ -1179,6 +1179,7 @@ PRINT_CONFIG_CLASS_DEFINE(
     ((ConfigOptionFloat,              tree_support_tip_diameter))
     ((ConfigOptionInt,                tree_support_wall_count))
     ((ConfigOptionBool,               detect_narrow_internal_solid_infill))
+    ((ConfigOptionBool,               detect_narrow_bottom_surface_infill))
     ((ConfigOptionBool,               detect_floating_vertical_shell))
     // ((ConfigOptionBool,               adaptive_layer_height))
     ((ConfigOptionFloat,              support_bottom_interface_spacing))

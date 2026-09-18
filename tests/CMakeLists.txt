@@ -60,6 +60,7 @@ add_subdirectory(libnest2d EXCLUDE_FROM_ALL)
 add_subdirectory(libslic3r EXCLUDE_FROM_ALL)
 add_subdirectory(sla_print EXCLUDE_FROM_ALL)
 
+add_subdirectory(narrow_bottom_infill)
 add_subdirectory(cpp17 EXCLUDE_FROM_ALL)    # does not have to be built all the time
 # add_subdirectory(example)
 
