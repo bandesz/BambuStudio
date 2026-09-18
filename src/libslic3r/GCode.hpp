@@ -181,6 +181,7 @@ public:
         //m_volumetric_speed(0),
         m_last_scarf_seam_flag(false),
         m_scarf_seam_start(false),
+        m_inset_start_done_this_island(false),
         m_last_pos_defined(false),
         m_last_extrusion_role(erNone),
         m_last_width(0.0f),
@@ -423,6 +424,7 @@ private:
     std::string     change_layer(coordf_t print_z);
     std::string     extrude_entity(const ExtrusionEntity &entity, std::string description = "", double speed = -1.);
     std::string     extrude_loop(ExtrusionLoop loop, std::string description, double speed = -1.);
+    std::string     extrude_inset_lead_in(const ExtrusionPath &ref_path, const Point &wall_start);
     std::string     extrude_multi_path(ExtrusionMultiPath multipath, std::string description = "", double speed = -1.);
     std::string     extrude_path(ExtrusionPath path, std::string description = "", double speed = -1.);
 
@@ -613,6 +615,8 @@ private:
     bool                                m_last_pos_defined;
     bool                                m_last_scarf_seam_flag;
     bool                                m_scarf_seam_start;
+    bool                                m_inset_start_done_this_island;
+    Polygons                            m_inset_start_exclusion;
     std::unique_ptr<GCodeEditor>        m_gcode_editer;
     std::unique_ptr<SpiralVase>         m_spiral_vase;
 #ifdef HAS_PRESSURE_EQUALIZER

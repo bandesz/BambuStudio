@@ -191,6 +191,7 @@ bool Print::invalidate_state_by_config_options(const ConfigOptionResolver & /* n
         "is_infill_first",
         //OrcaSlicer
         "seam_gap",
+        "first_layer_inset_start",
         "wipe_speed"
         "default_jerk",
         "outer_wall_jerk",
