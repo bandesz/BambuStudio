@@ -16,6 +16,7 @@
 #include "libslic3r/format.hpp"
 #include "MultiNozzleUtils.hpp"
 #include "GCodeReader.hpp"
+#include "InsetStart.hpp"
 
 #include <algorithm>
 #include <cstdlib>
@@ -5429,6 +5430,8 @@ GCode::LayerResult GCode::process_layer(
                 //FIXME order islands?
                 // Sequential tool path ordering of multiple parts within the same object, aka. perimeter tracking (#5511)
                 for (ObjectByExtruder::Island &island : instance_to_print.object_by_extruder.islands) {
+                    m_inset_start_done_this_island = false;
+                    m_inset_start_exclusion.clear();
                     const auto& by_region_specific = is_anything_overridden ? island.by_region_per_copy(by_region_per_copy_cache, static_cast<unsigned int>(instance_to_print.instance_id), extruder_id, print_wipe_extrusions != 0) : island.by_region;
                     //BBS: add brim by obj by extruder
                     if (first_layer) {
@@ -5749,6 +5752,8 @@ GCode::LayerResult GCode::process_layer(
                     m_need_change_layer_lift_z = true;
 
                     for (ObjectByExtruder::Island &island : instance_to_print.object_by_extruder.islands) {
+                        m_inset_start_done_this_island = false;
+                        m_inset_start_exclusion.clear();
                         const auto &src = island.by_region;
                         std::vector<ObjectByExtruder::Island::Region> subset_storage;
                         if (entry.region_filter) {
@@ -6168,6 +6173,34 @@ double GCode::get_path_speed(const ExtrusionPath &path)
     return speed;
 }
 
+std::string GCode::extrude_inset_lead_in(const ExtrusionPath &ref_path, const Point &wall_start)
+{
+    if (!m_config.first_layer_inset_start || m_inset_start_done_this_island || !this->on_first_layer() || m_layer == nullptr || m_config.spiral_mode)
+        return {};
+
+    m_inset_start_done_this_island = true;
+
+    const ExPolygon *island = nullptr;
+    for (const ExPolygon &slice : m_layer->lslices) {
+        if (slice.contains(wall_start)) {
+            island = &slice;
+            break;
+        }
+    }
+    if (island == nullptr)
+        return {};
+
+    const coord_t line_width = scale_(ref_path.width);
+    Polyline      lead       = make_inset_lead_in(*island, wall_start, line_width, scale_(1.0));
+    if (lead.size() < 2)
+        return {};
+
+    ExtrusionPath path(ref_path);
+    path.polyline = std::move(lead);
+    m_inset_start_exclusion = inset_start_exclusion(path.polyline, line_width);
+    return this->_extrude(path, "inset start", -1.);
+}
+
 std::string GCode::extrude_loop(ExtrusionLoop loop, std::string description, double speed)
 {
     // get a copy; don't modify the orientation of the original loop object otherwise
@@ -6219,13 +6252,16 @@ std::string GCode::extrude_loop(ExtrusionLoop loop, std::string description, dou
     loop.clip_end(clip_length, &paths);
     if (paths.empty()) return "";
 
+    std::string gcode;
+    if (description == "perimeter")
+        gcode += this->extrude_inset_lead_in(paths.front(), paths.front().first_point());
+
     double small_peri_speed=-1;
     // apply the small perimeter speed
     if (loop.length() <= SMALL_PERIMETER_LENGTH(NOZZLE_CONFIG(small_perimeter_threshold)))
         small_peri_speed = NOZZLE_CONFIG(small_perimeter_speed).get_abs_value(NOZZLE_CONFIG(outer_wall_speed));
 
     // extrude along the path
-    std::string gcode;
 
     const auto  speed_for_path = [&speed, &small_peri_speed](const ExtrusionPath &path) {
         // don't apply small perimeter setting for bridge/non-perimeters
@@ -6432,6 +6468,24 @@ std::string GCode::extrude_entity(const ExtrusionEntity &entity, std::string des
 
 std::string GCode::extrude_path(ExtrusionPath path, std::string description, double speed)
 {
+    if (!m_inset_start_exclusion.empty() && is_infill(path.role()) && path.role() != erIroning) {
+        Polylines pieces = clip_against_inset_start(path.polyline, m_inset_start_exclusion);
+        if (pieces.empty())
+            return {};
+        if (pieces.size() > 1 || pieces.front() != path.polyline) {
+            Polygons saved = std::move(m_inset_start_exclusion);
+            m_inset_start_exclusion.clear();
+            std::string gcode;
+            for (Polyline &piece : pieces) {
+                ExtrusionPath clipped(path);
+                clipped.polyline = std::move(piece);
+                gcode += this->extrude_path(clipped, description, speed);
+            }
+            m_inset_start_exclusion = std::move(saved);
+            return gcode;
+        }
+    }
+
 //    description += ExtrusionEntity::role_to_string(path.role());
     bool flag = path.get_customize_flag() == CustomizeFlag::cfFloatingVerticalShell;
     std::string gcode = this->_extrude(path, description, speed,flag);
