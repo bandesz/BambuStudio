@@ -6221,6 +6221,15 @@ void PrintConfigDef::init_fff_params()
     // Disabled unless the process profile enables it, so that projects saved without this option keep their seams.
     def->set_default_value(new ConfigOptionFloat(0.));
 
+    def          = this->add("first_layer_inset_start", coBool);
+    def->label   = L("In-wall start on first layer");
+    def->category = L("Quality");
+    def->tooltip = L("Start the first extrusion of each first-layer island inside the part, then move out to the wall. "
+                     "Leftover pressure after purge is dumped in the material instead of on a visible outline. "
+                     "Skipped when the part is only one line thick.");
+    def->mode    = comAdvanced;
+    def->set_default_value(new ConfigOptionBool(false));
+
     def = this->add("seam_gap", coPercent);
     def->label = L("Seam gap");
     def->category = L("Quality");

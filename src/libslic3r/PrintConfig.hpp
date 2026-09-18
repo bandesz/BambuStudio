@@ -1115,6 +1115,7 @@ PRINT_CONFIG_CLASS_DEFINE(
     ((ConfigOptionEnum<SeamPosition>,  seam_position))
     ((ConfigOptionBool,                seam_placement_away_from_overhangs))
     ((ConfigOptionFloat,               seam_embedded_headroom))
+    ((ConfigOptionBool,                first_layer_inset_start))
     ((ConfigOptionFloat,               slice_closing_radius))
     ((ConfigOptionEnum<SlicingMode>,   slicing_mode))
     ((ConfigOptionBool,                enable_support))

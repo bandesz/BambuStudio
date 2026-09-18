@@ -1829,6 +1829,7 @@ bool PrintObject::invalidate_state_by_config_options(
                opt_key == "seam_position"
             || opt_key == "seam_placement_away_from_overhangs"
             || opt_key == "seam_embedded_headroom"
+            || opt_key == "first_layer_inset_start"
             || opt_key == "seam_slope_conditional"
             || opt_key == "scarf_angle_threshold"
             || opt_key == "seam_slope_entire_loop"
