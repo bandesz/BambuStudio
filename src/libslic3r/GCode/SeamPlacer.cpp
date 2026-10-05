@@ -1094,7 +1094,7 @@ bool layer_needs_embedding(const Layer *layer)
 // For each point of the perimeter starting at start_index, computes the length of hidden wall extruded after
 // the point before the wall becomes exposed, capped at max_headroom. Requires embedded_distance to be computed.
 // Candidates are stored counter-clockwise (see process_perimeter_polygon()); GCode::extrude_loop() prints loops
-// counter-clockwise unless print_in_clockwise is set, in which case the printing direction is reversed.
+// counter-clockwise unless the closed-loop print direction is clockwise, in which case the printing direction is reversed.
 void compute_embedded_headroom(std::vector<SeamCandidate> &points, size_t start_index, float max_headroom, bool print_in_clockwise)
 {
     const size_t end_index = points[start_index].perimeter.end_index;
@@ -1207,7 +1207,7 @@ void SeamPlacer::calculate_overhangs_and_layer_embedding(const PrintObject *po)
     using namespace SeamPlacerImpl;
     std::vector<PrintObjectSeamData::LayerSeams> &layers = m_seam_per_object[po].layers;
     const float headroom_target    = float(po->config().seam_embedded_headroom.value);
-    const bool  print_in_clockwise = po->print()->config().print_in_clockwise.value;
+    const bool  print_in_clockwise = print_loop_clockwise(po->print()->config());
     tbb::parallel_for(tbb::blocked_range<size_t>(0, layers.size()), [po, &layers, headroom_target, print_in_clockwise](tbb::blocked_range<size_t> r) {
         std::unique_ptr<PerimeterDistancer> prev_layer_distancer;
         if (r.begin() > 0) { // previous layer exists
