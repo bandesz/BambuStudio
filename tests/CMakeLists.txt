@@ -62,6 +62,7 @@ add_subdirectory(sla_print EXCLUDE_FROM_ALL)
 
 add_subdirectory(narrow_bottom_infill)
 add_subdirectory(inset_start)
+add_subdirectory(seam_tower)
 add_subdirectory(cpp17 EXCLUDE_FROM_ALL)    # does not have to be built all the time
 # add_subdirectory(example)
 

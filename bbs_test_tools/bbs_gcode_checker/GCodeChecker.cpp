@@ -895,6 +895,7 @@ const std::map<std::string, ExtrusionRole> string_to_role_map = {
     { "Support transition",         erSupportTransition },
     { "Prime tower",                erWipeTower },
     { "Custom",                     erCustom },
+    { "Seam tower",                 erSeamTower },
     { "Mixed",                      erMixed }
 };
 

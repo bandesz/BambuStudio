@@ -5,6 +5,8 @@
 #include "PrintConfig.hpp"
 #include "libslic3r/Log.hpp"
 
+#include <optional>
+
 #define BED_SHRINK_SEQ_PRINT 0
 
 namespace Slic3r {
@@ -36,6 +38,15 @@ struct InfiniteBed {
 /// has not yet successfully run on this ArrangePolygon or it could not fit the
 /// object due to overly large size or invalid geometry.
 static const constexpr int UNARRANGED = -1;
+
+/// Per-object seam-tower margin. When set on an ArrangePolygon, arrange inflation
+/// uses these values. Unset means a non-virtual polygon falls back to the shared
+/// print config. A virtual polygon never uses that fallback.
+struct SeamTowerMargin {
+    bool   enabled{false};
+    double gap{0.};
+    double depth{0.};
+};
 
 /// Input/Output structure for the arrange() function. The poly field will not
 /// be modified during arrangement. Instead, the translation and rotation fields
@@ -73,6 +84,7 @@ struct ArrangePolygon {
     int       is_applied{ 0 };     // transform has been applied
     double    height{ 0 };         // item height
     double    brim_width{ 0 };     // brim width
+    std::optional<SeamTowerMargin> seam_tower_margin;
     std::string name;
 
     // If empty, any rotation is allowed (currently unsupported)

@@ -3124,6 +3124,12 @@ void TabPrint::build()
         optgroup->append_single_option_line("seam_placement_away_from_overhangs", "Seam");
         optgroup->append_single_option_line("seam_embedded_headroom", "Seam");
         optgroup->append_single_option_line("first_layer_inset_start", "Seam");
+        optgroup->append_single_option_line("seam_tower", "Seam");
+        optgroup->append_single_option_line("seam_tower_gap", "Seam");
+        optgroup->append_single_option_line("seam_tower_depth", "Seam");
+        optgroup->append_single_option_line("seam_tower_length", "Seam");
+        optgroup->append_single_option_line("seam_tower_in_holes", "Seam");
+        optgroup->append_single_option_line("seam_tower_min_size", "Seam");
         optgroup->append_single_option_line("seam_gap", "Seam");
         optgroup->append_single_option_line("seam_slope_conditional", "Seam");
         optgroup->append_single_option_line("scarf_angle_threshold", "Seam");

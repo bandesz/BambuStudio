@@ -179,6 +179,16 @@ ArrangePolygon get_instance_arrange_poly(ModelInstance* instance, const Slic3r::
     auto size = obj->instance_convex_hull_bounding_box(instance).size();
     ap.height = size.z();
     ap.name = obj->name;
+
+    // Object config wins over the process preset, same lookup as enable_support.
+    arrangement::SeamTowerMargin margin;
+    const auto *seam_tower       = obj->get_config_value<ConfigOptionBool>(config, "seam_tower");
+    const auto *seam_tower_gap   = obj->get_config_value<ConfigOptionFloat>(config, "seam_tower_gap");
+    const auto *seam_tower_depth = obj->get_config_value<ConfigOptionFloat>(config, "seam_tower_depth");
+    margin.enabled               = seam_tower != nullptr && seam_tower->value;
+    margin.gap                   = seam_tower_gap != nullptr ? seam_tower_gap->value : 0.;
+    margin.depth                 = seam_tower_depth != nullptr ? seam_tower_depth->value : 0.;
+    ap.seam_tower_margin         = margin;
     return ap;
 }
 

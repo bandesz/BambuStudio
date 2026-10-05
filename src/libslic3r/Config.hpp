@@ -2196,7 +2196,14 @@ public:
                 else
                     throw ConfigurationError("Deserializing nil into a non-nullable object");
             }
-            else {
+            else if (this->keys_map == nullptr) {
+                // Numeric fallback when constructed without an enum map (G-code export).
+                std::istringstream iss(item_str);
+                int value;
+                if (!(iss >> value))
+                    return false;
+                this->values.push_back(value);
+            } else {
                 auto it = this->keys_map->find(item_str);
                 if (it == this->keys_map->end())
                     return false;
@@ -2215,7 +2222,10 @@ private:
             else
                 throw ConfigurationError("Serializing NaN");
         }
-        else {
+        else if (this->keys_map == nullptr) {
+            // Numeric fallback when constructed without an enum map (G-code export).
+            ss << v;
+        } else {
             for (const auto& kvp : *this->keys_map)
                 if (kvp.second == v)
                     ss << kvp.first;
