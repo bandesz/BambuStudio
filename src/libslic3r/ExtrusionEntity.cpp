@@ -633,8 +633,9 @@ std::string ExtrusionEntity::role_to_string(ExtrusionRole role)
         case erSupportTransition            : return L("Support transition");
         case erWipeTower                    : return L("Prime tower");
         case erCustom                       : return L("Custom");
-        case erMixed                        : return L("Multiple");
         case erFlush                        : return L("Flush");
+        case erSeamTower                    : return L("Seam tower");
+        case erMixed                        : return L("Multiple");
         default                             : assert(false);
     }
     return "";
@@ -680,10 +681,12 @@ ExtrusionRole ExtrusionEntity::string_to_role(const std::string_view role)
         return erWipeTower;
     else if (role == L("Custom"))
         return erCustom;
-    else if (role == L("Multiple"))
-        return erMixed;
     else if (role == L("Flush"))
         return erFlush;
+    else if (role == L("Seam tower"))
+        return erSeamTower;
+    else if (role == L("Multiple"))
+        return erMixed;
     else
         return erNone;
 }

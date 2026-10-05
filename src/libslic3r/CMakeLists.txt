@@ -81,6 +81,8 @@ set(lisbslic3r_sources
     ElephantFootCompensation.hpp
     InsetStart.cpp
     InsetStart.hpp
+    SeamTower.cpp
+    SeamTower.hpp
     Emboss.cpp
     Emboss.hpp
     EmbossShape.hpp
@@ -191,6 +193,8 @@ set(lisbslic3r_sources
     GCode/SpiralVase.hpp
     GCode/SeamPlacer.cpp
     GCode/SeamPlacer.hpp
+    GCode/SeamTowerPlanner.cpp
+    GCode/SeamTowerPlanner.hpp
     GCode/ToolOrdering.cpp
     GCode/ToolOrdering.hpp
     GCode/WipeTower.cpp

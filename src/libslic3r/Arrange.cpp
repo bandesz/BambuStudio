@@ -1,6 +1,7 @@
 ﻿#include "Arrange.hpp"
 #include "Print.hpp"
 #include "BoundingBox.hpp"
+#include "SeamTower.hpp"
 
 #include <libnest2d/backends/libslic3r/geometries.hpp>
 #include <libnest2d/optimizers/nlopt/subplex.hpp>
@@ -64,6 +65,31 @@ namespace arrangement {
 
 using namespace libnest2d;
 
+// Older configs without seam_tower* keys are treated as off / 0.
+static coord_t seam_tower_inflation(const DynamicPrintConfig &cfg)
+{
+    const auto *enabled = cfg.option<ConfigOptionBool>("seam_tower");
+    const auto *gap     = cfg.option<ConfigOptionFloat>("seam_tower_gap");
+    const auto *depth   = cfg.option<ConfigOptionFloat>("seam_tower_depth");
+    return scaled(seam_tower_arrange_inflation_mm(
+        enabled && enabled->value,
+        gap ? gap->value : 0.,
+        depth ? depth->value : 0.));
+}
+
+// A virtual polygon never takes the shared print-config margin. A real polygon
+// uses its own margin when one was stored, otherwise the shared print config.
+static coord_t seam_tower_inflation_for(const ArrangePolygon &ap, const DynamicPrintConfig &print_cfg)
+{
+    if (ap.is_virt_object)
+        return 0;
+    if (ap.seam_tower_margin.has_value()) {
+        const SeamTowerMargin &margin = *ap.seam_tower_margin;
+        return scaled(seam_tower_arrange_inflation_mm(margin.enabled, margin.gap, margin.depth));
+    }
+    return seam_tower_inflation(print_cfg);
+}
+
 // Get the libnest2d types for clipper backend
 using Item         = _Item<ExPolygon>;
 using Box          = _Box<Point>;
@@ -126,6 +152,7 @@ void update_selected_items_inflation(ArrangePolygons& selected, const DynamicPri
         // 2. if there is an object with tree support, all objects use the max tree branch radius (brim_max=branch diameter)
         // 3. otherwise, use each object's own brim width
         ap.inflation = params.min_obj_distance != 0 ? params.min_obj_distance / 2 : params.plate_has_tree_support ? scaled(params.brim_max / 2) : scaled(ap.brim_width);
+        ap.inflation += seam_tower_inflation_for(ap, print_cfg);
         // STUDIO: 调用方可通过 params.min_inflation_floor 显式要求"最小可见间隙"。
         // 仅在自动档位（用户没显式设 min_obj_distance）下生效，避免污染显式间距语义。
         // 默认 0 = 关闭，保持各 arrange 路径的旧行为；FillBedJob 会在调用前主动设置。
@@ -155,6 +182,7 @@ void update_unselected_items_inflation(ArrangePolygons& unselected, const Dynami
         ap.inflation = !ap.is_virt_object                                  ? (params.min_obj_distance == 0 ? scaled(ap.brim_width) : params.min_obj_distance / 2) :
                        (ap.is_wipe_tower && params.plate_has_tree_support) ? scaled(params.brim_max / 2) :
                                                                              (ap.is_extrusion_cali_object ? 0 : exclusion_gap);
+        ap.inflation += seam_tower_inflation_for(ap, print_cfg);
     });
 }
 

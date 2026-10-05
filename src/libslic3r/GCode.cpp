@@ -1997,9 +1997,10 @@ void GCode::do_export(Print* print, const char* path, GCodeProcessorResult* resu
 
     BOOST_LOG_TRIVIAL(info) << "Exporting G-code finished" << log_memory_info();
     print->set_done(psGCodeExport);
-    //BBS: set enable_label_object
-    result->label_object_enabled = m_enable_label_object;
-    result->support_material_on_wipe_tower = print->support_material_on_wipe_tower();
+    if (result != nullptr) {
+        result->label_object_enabled = m_enable_label_object;
+        result->support_material_on_wipe_tower = print->support_material_on_wipe_tower();
+    }
     // Write the profiler measurements to file
     PROFILE_UPDATE();
     PROFILE_OUTPUT(debug_out_path("gcode-export-profile.txt").c_str());
@@ -3044,6 +3045,13 @@ void GCode::_do_export(Print& print, GCodeOutputStream &file, ThumbnailsGenerato
     // Collect custom seam data from all objects.
     std::function<void(void)> throw_if_canceled_func = [&print]() { print.throw_if_canceled(); };
     m_seam_placer.init(print, throw_if_canceled_func);
+    {
+        SeamTowerParams seam_tower_params;
+        seam_tower_params.spiral_vase = print.config().spiral_mode.value;
+        m_seam_tower_planner.build(print, m_seam_placer, seam_tower_params);
+        for (const std::string &msg : m_seam_tower_planner.warnings())
+            const_cast<Print &>(print).active_step_add_warning(PrintStateBase::WarningLevel::NON_CRITICAL, msg);
+    }
 
     // BBS: get path for change filament
     if (m_writer.multiple_extruders) {
@@ -4535,6 +4543,45 @@ GCode::TimelapseGCodeResult GCode::generate_timelapse_gcode(const Print &print, 
     return result;
 }
 
+// role() is only paths.front(). An overhang segment at the seam would hide
+// erExternalPerimeter on the same outer wall and skip the tower hop.
+// depth == 1 is elrSecondPerimeter and is printed before the outer wall. The
+// match radius reaches that inset, so an all-overhang inner wall must not
+// take the tower. A path that is still erExternalPerimeter keeps pairing.
+static bool loop_pairs_with_seam_tower(const ExtrusionLoop &loop)
+{
+    bool external  = false;
+    bool overhang  = false;
+    bool perimeter = false;
+    for (const ExtrusionPath &path : loop.paths) {
+        switch (path.role()) {
+        case erExternalPerimeter: external = true; break;
+        case erOverhangPerimeter: overhang = true; break;
+        case erPerimeter:         perimeter = true; break;
+        default: break;
+        }
+    }
+    const bool second_perimeter = (loop.loop_role() & elrSecondPerimeter) != 0;
+    return external || (!second_perimeter && overhang && !perimeter);
+}
+
+static bool seam_tower_extrusion_has_role(const ExtrusionEntity &entity, ExtrusionRole role)
+{
+    // A closed outer wall may be entirely erOverhangPerimeter. loop::role() is
+    // only the first path, so visit scheduling has to use the pairing predicate.
+    if (role == erExternalPerimeter)
+        if (const auto *loop = dynamic_cast<const ExtrusionLoop *>(&entity))
+            return loop_pairs_with_seam_tower(*loop);
+    if (entity.role() == role)
+        return true;
+    if (const auto *coll = dynamic_cast<const ExtrusionEntityCollection *>(&entity)) {
+        for (const ExtrusionEntity *child : coll->entities)
+            if (child != nullptr && seam_tower_extrusion_has_role(*child, role))
+                return true;
+    }
+    return false;
+}
+
 // In sequential mode, process_layer is called once per each object and its copy,
 // therefore layers will contain a single entry and single_object_instance_idx will point to the copy of the object.
 // In non-sequential mode, process_layer is called per each print_z height with all object and support layers accumulated.
@@ -5115,6 +5162,57 @@ GCode::LayerResult GCode::process_layer(
         }
     }
 
+    auto regions_have_external_perimeters = [](const std::vector<ObjectByExtruder::Island::Region> &by_region) {
+        for (const ObjectByExtruder::Island::Region &region : by_region)
+            for (const ExtrusionEntity *ee : region.perimeters)
+                if (ee != nullptr && seam_tower_extrusion_has_role(*ee, erExternalPerimeter))
+                    return true;
+        return false;
+    };
+
+    auto object_by_extruder_has_external_perimeters = [&](const ObjectByExtruder &obe) {
+        for (const ObjectByExtruder::Island &island : obe.islands)
+            if (regions_have_external_perimeters(island.by_region))
+                return true;
+        return false;
+    };
+
+    auto instance_on_extruder_has_external = [&](unsigned int eid, const InstanceToPrint &instance) {
+        auto it = filament_to_print_instances.find(eid);
+        if (it == filament_to_print_instances.end())
+            return false;
+        for (const InstanceToPrint &inst : it->second) {
+            if (&inst.print_object == &instance.print_object && inst.instance_id == instance.instance_id
+                && object_by_extruder_has_external_perimeters(inst.object_by_extruder))
+                return true;
+        }
+        return false;
+    };
+
+    // Walls of a mixed slot live under the slot id, not under each component. A later
+    // component visit still extrudes those walls, so an earlier infill visit must not
+    // treat them as already missed.
+    auto later_visit_has_external_perimeters = [&](unsigned int current, const InstanceToPrint &instance) {
+        bool seen = false;
+        for (unsigned int eid : layer_tools.extruders) {
+            if (!seen) {
+                if (eid == current)
+                    seen = true;
+                continue;
+            }
+            if (instance_on_extruder_has_external(eid, instance))
+                return true;
+            for (const auto &grp : layer_tools.mixed_sub_layer_groups) {
+                if (std::find(grp.components_0based.begin(), grp.components_0based.end(), eid)
+                    == grp.components_0based.end())
+                    continue;
+                if (instance_on_extruder_has_external(grp.mixed_slot_0based, instance))
+                    return true;
+            }
+        }
+        return false;
+    };
+
     std::set<size_t> layer_object_label_ids;
     for (auto iter = filament_to_print_instances.begin(); iter != filament_to_print_instances.end(); ++iter) {
         for (const InstanceToPrint &instance : iter->second) {
@@ -5513,6 +5611,31 @@ GCode::LayerResult GCode::process_layer(
                     if (!filament_info.use_for_object)
                         filament_info.use_for_object = true;
                 }
+                if (print_wipe_extrusions == 0 && layer_to_print.object_layer != nullptr
+                    && instance_to_print.print_object.config().seam_tower
+                    && (object_by_extruder_has_external_perimeters(instance_to_print.object_by_extruder)
+                        || !later_visit_has_external_perimeters(extruder_id, instance_to_print))) {
+                    bool mixed_later = false;
+                    for (const auto &grp : layer_tools.mixed_sub_layer_groups) {
+                        if (std::find(grp.components_0based.begin(), grp.components_0based.end(), extruder_id)
+                            == grp.components_0based.end())
+                            continue;
+                        auto mit = filament_to_print_instances.find(grp.mixed_slot_0based);
+                        if (mit == filament_to_print_instances.end())
+                            continue;
+                        for (const InstanceToPrint &mi : mit->second) {
+                            if (&mi.print_object == &instance_to_print.print_object
+                                && mi.instance_id == instance_to_print.instance_id) {
+                                mixed_later = true;
+                                break;
+                            }
+                        }
+                        if (mixed_later)
+                            break;
+                    }
+                    if (!mixed_later)
+                        gcode += this->extrude_unmatched_seam_towers();
+                }
                 // Don't set m_gcode_label_objects_end if you don't had to write the m_gcode_label_objects_start.
                 if (!m_writer.empty_object_start_str()) {
                     m_writer.set_object_start_str("");
@@ -5600,6 +5723,10 @@ GCode::LayerResult GCode::process_layer(
                     gcode += m_writer.reset_e(true);
 
                 const Point &offset = inst.shift;
+                std::pair<const PrintObject*, Point> this_object_copy(&instance_to_print.print_object, offset);
+                if (m_last_obj_copy != this_object_copy)
+                    m_avoid_crossing_perimeters.use_external_mp_once();
+                m_last_obj_copy = this_object_copy;
                 this->set_origin(unscale(offset));
 
                 // --- Build emission plan ---
@@ -5731,6 +5858,10 @@ GCode::LayerResult GCode::process_layer(
                 }
 
                 // --- Unified emission loop ---
+                // Unfiltered object_by_extruder still holds the outer wall when this
+                // component's region filter skips it. Only perimeters this pass extrudes
+                // count, so a later component can still hop to the tower.
+                bool this_visit_extruded_external = false;
                 const bool is_infill_first = print.config().is_infill_first;
                 auto has_infill = [](const std::vector<ObjectByExtruder::Island::Region> &by_region) {
                     for (const auto &r : by_region)
@@ -5763,6 +5894,9 @@ GCode::LayerResult GCode::process_layer(
                                     subset_storage[r] = src[r];
                         }
                         const auto &by_region_specific = entry.region_filter ? subset_storage : src;
+                        if (instance_to_print.print_object.config().seam_tower
+                            && regions_have_external_perimeters(by_region_specific))
+                            this_visit_extruded_external = true;
 
                         if (is_infill_first && !first_layer) {
                             if (!has_wipe_tower && need_insert_timelapse_gcode_for_traditional
@@ -5788,6 +5922,11 @@ GCode::LayerResult GCode::process_layer(
                         gcode += this->extrude_infill(print, by_region_specific, true);
                     }
                 }
+                if (layer_to_print.object_layer != nullptr
+                    && instance_to_print.print_object.config().seam_tower
+                    && (this_visit_extruded_external
+                        || !later_visit_has_external_perimeters(extruder_id, instance_to_print)))
+                    gcode += this->extrude_unmatched_seam_towers();
 
                 // --- Shared support ---
                 if (instance_to_print.object_by_extruder.support && !instance_to_print.object_by_extruder.support->empty()) {
@@ -6190,6 +6329,15 @@ std::string GCode::extrude_inset_lead_in(const ExtrusionPath &ref_path, const Po
     if (island == nullptr)
         return {};
 
+    if (m_layer->object() != nullptr && m_layer->object()->config().seam_tower) {
+        const size_t layer_index = m_layer->id() - m_layer->object()->slicing_parameters().raft_layers();
+        const coord_t match = m_seam_tower_planner.match_distance();
+        const Point   instance_shift = Point::new_scale(this->origin());
+        if (m_seam_tower_planner.has_tower_for(int(layer_index), wall_start, match, m_layer->object(), instance_shift) ||
+            m_seam_tower_planner.has_tower_for(int(layer_index), *island, m_layer->object(), instance_shift))
+            return {};
+    }
+
     const coord_t line_width = scale_(ref_path.width);
     Polyline      lead       = make_inset_lead_in(*island, wall_start, line_width, scale_(1.0));
     if (lead.size() < 2)
@@ -6198,7 +6346,67 @@ std::string GCode::extrude_inset_lead_in(const ExtrusionPath &ref_path, const Po
     ExtrusionPath path(ref_path);
     path.polyline = std::move(lead);
     m_inset_start_exclusion = inset_start_exclusion(path.polyline, line_width);
-    return this->_extrude(path, "inset start", -1.);
+    return "; inset start\n" + this->_extrude(path, "inset start", -1.);
+}
+
+std::string GCode::extrude_seam_tower_paths(const ExtrusionEntityCollection &tower)
+{
+    std::string out;
+    auto emit_entity = [&](auto &self, const ExtrusionEntity &entity) -> void {
+        if (const auto *coll = dynamic_cast<const ExtrusionEntityCollection *>(&entity)) {
+            for (const ExtrusionEntity *child : coll->entities)
+                self(self, *child);
+            return;
+        }
+        if (const auto *loop = dynamic_cast<const ExtrusionLoop *>(&entity)) {
+            for (const ExtrusionPath &path : loop->paths)
+                out += this->_extrude(path, "seam tower");
+            return;
+        }
+        if (const auto *path = dynamic_cast<const ExtrusionPath *>(&entity))
+            out += this->_extrude(*path, "seam tower");
+    };
+    for (const ExtrusionEntity *entity : tower.entities)
+        emit_entity(emit_entity, *entity);
+    return out;
+}
+
+std::string GCode::extrude_seam_tower_then_hop(const ExtrusionEntityCollection &tower, const Point &loop_start)
+{
+    std::string gcode;
+    if (tower.empty())
+        return gcode;
+
+    gcode += this->travel_to(tower.first_point(), erSeamTower, "move to first seam tower point");
+    gcode += this->extrude_seam_tower_paths(tower);
+
+    // Print tests: an unretracted hop welds the tower to the wall. Retract, then
+    // a straight travel; the wall's _extrude unretracts at the seam. Clear wipe
+    // first so retract does not wipe along the last tower path.
+    m_wipe.reset_path();
+    gcode += this->retract(false, false, LiftType::NormalLift);
+    gcode += "; travel to wall\n";
+    const Vec2d dest = this->point_to_gcode(loop_start);
+    gcode += m_writer.travel_to_xyz(Vec3d(dest.x(), dest.y(), m_nominal_z), "travel to wall");
+    this->set_last_pos(loop_start);
+    return gcode;
+}
+
+std::string GCode::extrude_unmatched_seam_towers()
+{
+    if (m_layer == nullptr || m_layer->object() == nullptr)
+        return {};
+    const int layer_index = int(m_layer->id() - m_layer->object()->slicing_parameters().raft_layers());
+    const std::vector<const ExtrusionEntityCollection *> towers = m_seam_tower_planner.take_unprinted_towers(
+        layer_index, m_layer->object(), Point::new_scale(this->origin()));
+    std::string gcode;
+    for (const ExtrusionEntityCollection *tower : towers) {
+        if (tower == nullptr || tower->empty())
+            continue;
+        gcode += this->travel_to(tower->first_point(), erSeamTower, "move to seam tower pad");
+        gcode += this->extrude_seam_tower_paths(*tower);
+    }
+    return gcode;
 }
 
 std::string GCode::extrude_loop(ExtrusionLoop loop, std::string description, double speed)
@@ -6216,10 +6424,21 @@ std::string GCode::extrude_loop(ExtrusionLoop loop, std::string description, dou
     // or randomize if requested
     Point last_pos = this->last_pos();
     bool  satisfy_scarf_seam_angle_threshold = false;
+    std::string gcode;
     if (!m_config.spiral_mode && description == "perimeter") {
         assert(m_layer != nullptr);
         bool is_outer_wall_first = m_config.wall_sequence == WallSequence::OuterInner;
         m_seam_placer.place_seam(m_layer, loop, is_outer_wall_first, this->last_pos(), satisfy_scarf_seam_angle_threshold);
+        if (m_layer != nullptr && m_layer->object() != nullptr && m_layer->object()->config().seam_tower
+            && loop_pairs_with_seam_tower(loop)) {
+            const size_t layer_index = m_layer->id() - m_layer->object()->slicing_parameters().raft_layers();
+            if (const ExtrusionEntityCollection *tower = m_seam_tower_planner.take_matching_tower(
+                    int(layer_index), loop.first_point(), m_seam_tower_planner.match_distance(), m_layer->object(),
+                    Point::new_scale(this->origin()))) {
+                gcode += this->extrude_seam_tower_then_hop(*tower, loop.first_point());
+                m_inset_start_done_this_island = true;
+            }
+        }
     } else
         loop.split_at(last_pos, false);
 
@@ -6250,9 +6469,8 @@ std::string GCode::extrude_loop(ExtrusionLoop loop, std::string description, dou
         enable_seam_slope = true;
     }
     loop.clip_end(clip_length, &paths);
-    if (paths.empty()) return "";
+    if (paths.empty()) return gcode;
 
-    std::string gcode;
     if (description == "perimeter")
         gcode += this->extrude_inset_lead_in(paths.front(), paths.front().first_point());
 
@@ -6340,7 +6558,7 @@ std::string GCode::extrude_loop(ExtrusionLoop loop, std::string description, dou
         } else {
             paths.clear();
             loop.clip_end(clip_length, &paths);
-            if (paths.empty()) return "";
+            if (paths.empty()) return gcode;
         }
     }
 
@@ -7272,6 +7490,8 @@ std::string GCode::_extrude(const ExtrusionPath &path, std::string description, 
                 new_speed = get_overhang_degree_corr_speed(speed, path.overhang_degree);
                 speed = new_speed == 0.0 ? speed : new_speed;
             }
+        } else if (path.role() == erSeamTower) {
+            speed = NOZZLE_CONFIG(outer_wall_speed);
         } else if (path.role() == erExternalPerimeter) {
             speed = NOZZLE_CONFIG(outer_wall_speed);
             // reset speed by auto compensation speed
