@@ -209,6 +209,13 @@ enum class SeamScarfType {
     All,
 };
 
+// Project override for print_in_clockwise. Printer keeps the printer profile.
+enum class LoopPrintDirection {
+    Printer = 0,
+    Clockwise,
+    CounterClockwise,
+};
+
 enum SLAMaterial {
     slamTough,
     slamFlex,
@@ -547,6 +554,7 @@ CONFIG_OPTION_ENUM_DECLARE_STATIC_MAPS(SupportMaterialInterfacePattern)
 CONFIG_OPTION_ENUM_DECLARE_STATIC_MAPS(SupportType)
 CONFIG_OPTION_ENUM_DECLARE_STATIC_MAPS(SeamPosition)
 CONFIG_OPTION_ENUM_DECLARE_STATIC_MAPS(SeamScarfType)
+CONFIG_OPTION_ENUM_DECLARE_STATIC_MAPS(LoopPrintDirection)
 CONFIG_OPTION_ENUM_DECLARE_STATIC_MAPS(SLADisplayOrientation)
 CONFIG_OPTION_ENUM_DECLARE_STATIC_MAPS(SLAPillarConnectionMode)
 CONFIG_OPTION_ENUM_DECLARE_STATIC_MAPS(BrimType)
@@ -1605,12 +1613,27 @@ PRINT_CONFIG_CLASS_DERIVED_DEFINE(
     ((ConfigOptionFloats,             filament_tower_ironing_area))
     ((ConfigOptionFloats,             filament_tower_interface_purge_volume))
     ((ConfigOptionInts,               filament_tower_interface_print_temp))
-    ((ConfigOptionBool,               enable_tower_interface_features)))
+    ((ConfigOptionBool,               enable_tower_interface_features))
+    ((ConfigOptionEnum<LoopPrintDirection>, loop_print_direction)))
 // This object is mapped to Perl as Slic3r::Config::Full.
 PRINT_CONFIG_CLASS_DERIVED_DEFINE0(
     FullPrintConfig,
     (PrintObjectConfig, PrintRegionConfig, PrintConfig)
 )
+
+// Closed-loop winding used by extrude_loop. Follow printer keeps print_in_clockwise.
+inline bool print_loop_clockwise(const FullPrintConfig &config)
+{
+    switch (config.loop_print_direction.value) {
+    case LoopPrintDirection::Clockwise:
+        return true;
+    case LoopPrintDirection::CounterClockwise:
+        return false;
+    case LoopPrintDirection::Printer:
+        return config.print_in_clockwise.value;
+    }
+    return config.print_in_clockwise.value;
+}
 
 // Validate the FullPrintConfig. Returns an empty string on success, otherwise an error message is returned.
 std::map<std::string, std::string> validate(const FullPrintConfig &config, bool under_cli = false);

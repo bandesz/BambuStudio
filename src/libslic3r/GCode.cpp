@@ -6415,7 +6415,7 @@ std::string GCode::extrude_loop(ExtrusionLoop loop, std::string description, dou
     // next copies (if any) would not detect the correct orientation
 
     // extrude all loops ccw or cw according to config
-    if (m_config.print_in_clockwise)
+    if (print_loop_clockwise(m_config))
         bool was_clockwise = loop.make_clockwise();
     else
         bool was_clockwise = loop.make_counter_clockwise();

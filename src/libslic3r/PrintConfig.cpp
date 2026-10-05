@@ -368,6 +368,13 @@ static t_config_enum_values s_keys_map_SeamScarfType{
 };
 CONFIG_OPTION_ENUM_DEFINE_STATIC_MAPS(SeamScarfType)
 
+static t_config_enum_values s_keys_map_LoopPrintDirection{
+    {"printer",            int(LoopPrintDirection::Printer)},
+    {"clockwise",          int(LoopPrintDirection::Clockwise)},
+    {"counterclockwise",   int(LoopPrintDirection::CounterClockwise)},
+};
+CONFIG_OPTION_ENUM_DEFINE_STATIC_MAPS(LoopPrintDirection)
+
 static const t_config_enum_values s_keys_map_SLADisplayOrientation = {
     { "landscape",      sladoLandscape},
     { "portrait",       sladoPortrait}
@@ -5081,6 +5088,21 @@ void PrintConfigDef::init_fff_params()
     def->enum_labels.push_back(L("Random"));
     def->mode = comSimple;
     def->set_default_value(new ConfigOptionEnum<SeamPosition>(spAligned));
+
+    def = this->add("loop_print_direction", coEnum);
+    def->label = L("Loop direction");
+    def->category = L("Quality");
+    def->tooltip = L("Project override for closed-loop print direction. Follow printer uses the printer profile. "
+                     "Clockwise and counter-clockwise keep the same seam start and walk the wall the other way.");
+    def->enum_keys_map = &ConfigOptionEnum<LoopPrintDirection>::get_enum_values();
+    def->enum_values.push_back("printer");
+    def->enum_values.push_back("clockwise");
+    def->enum_values.push_back("counterclockwise");
+    def->enum_labels.push_back(L("Follow printer"));
+    def->enum_labels.push_back(L("Clockwise"));
+    def->enum_labels.push_back(L("Counter-clockwise"));
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionEnum<LoopPrintDirection>(LoopPrintDirection::Printer));
 
     def          = this->add("seam_placement_away_from_overhangs", coBool);
     def->label   = L("Seam placement away from overhangs(experimental)");
