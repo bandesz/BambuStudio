@@ -780,7 +780,12 @@ static ExtrusionEntityCollection traverse_extrusions(const PerimeterGenerator& p
         // Append paths to collection.
         if (!paths.empty()) {
             if (extrusion->is_closed) {
-                ExtrusionLoop extrusion_loop(std::move(paths), extrusion->is_contour()? elrDefault : elrPerimeterHole);
+                // inset_idx == 0 is the outer contour. An all-overhang inner wall
+                // is printed first and sits inside the seam-tower match radius.
+                ExtrusionLoopRole loop_role = extrusion->is_contour() ? elrDefault : elrPerimeterHole;
+                if (extrusion->inset_idx != 0)
+                    loop_role = loop_role | elrSecondPerimeter;
+                ExtrusionLoop extrusion_loop(std::move(paths), loop_role);
                 // Restore the orientation of the extrusion loop.
                 if (pg_extrusion.is_contour)
                     extrusion_loop.make_counter_clockwise();
