@@ -3269,6 +3269,7 @@ void TabPrint::build()
 
         optgroup = page->new_optgroup(L("Advanced"), L"param_advanced");
         optgroup->append_single_option_line("wall_sequence","parameter/quality-advance-settings");
+        optgroup->append_single_option_line("loop_print_direction","parameter/quality-advance-settings");
         optgroup->append_single_option_line("is_infill_first","parameter/quality-advance-settings");
         optgroup->append_single_option_line("bridge_flow","parameter/bridge");
         optgroup->append_single_option_line("thick_bridges","parameter/bridge");
