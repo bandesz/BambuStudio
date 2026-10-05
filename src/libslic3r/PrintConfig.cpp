@@ -5098,6 +5098,61 @@ void PrintConfigDef::init_fff_params()
     def->mode    = comAdvanced;
     def->set_default_value(new ConfigOptionBool(false));
 
+    def          = this->add("seam_tower", coBool);
+    def->label   = L("Seam tower");
+    def->category = L("Quality");
+    def->tooltip = L("Print a small sacrificial island next to each stable outer-wall seam. "
+                     "The island is printed first to dump pressure, then the nozzle retracts and travels to the wall.");
+    def->mode    = comAdvanced;
+    def->set_default_value(new ConfigOptionBool(false));
+
+    def          = this->add("seam_tower_gap", coFloat);
+    def->label   = L("Seam tower gap");
+    def->category = L("Quality");
+    def->tooltip = L("Distance between the object wall and the inner edge of the tower. "
+                     "Use enough gap that the tower can snap off; the nozzle retracts before crossing it.");
+    def->sidetext = L("mm");
+    def->min     = 0;
+    def->mode    = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(0.1));
+
+    def          = this->add("seam_tower_depth", coFloat);
+    def->label   = L("Seam tower depth");
+    def->category = L("Quality");
+    def->tooltip = L("How far the tower extends away from the wall. "
+                     "The tower is a closed strip: a copy of the wall contour this far out, with the ends capped. "
+                     "Depth does not fill the island solid; at most two walls, plus a first-layer brim.");
+    def->sidetext = L("mm");
+    def->min     = 0;
+    def->mode    = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(2.0));
+
+    def          = this->add("seam_tower_length", coFloat);
+    def->label   = L("Seam tower length");
+    def->category = L("Quality");
+    def->tooltip = L("How far the tower extends along the wall, centred on the seam. "
+                     "If the seam stack wanders farther than this, the island grows to cover that window.");
+    def->sidetext = L("mm");
+    def->min     = 0;
+    def->mode    = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(4.0));
+
+    def          = this->add("seam_tower_in_holes", coBool);
+    def->label   = L("Seam tower in holes");
+    def->category = L("Quality");
+    def->tooltip = L("Also build towers on hole contours when the hole is large enough.");
+    def->mode    = comAdvanced;
+    def->set_default_value(new ConfigOptionBool(false));
+
+    def          = this->add("seam_tower_min_size", coFloat);
+    def->label   = L("Seam tower min size");
+    def->category = L("Quality");
+    def->tooltip = L("Minimum hole size that may receive a tower. Smaller holes skip the tower.");
+    def->sidetext = L("mm");
+    def->min     = 0;
+    def->mode    = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(3.0));
+
     def = this->add("seam_gap", coPercent);
     def->label = L("Seam gap");
     def->category = L("Quality");

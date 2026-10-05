@@ -64,6 +64,7 @@ enum ExtrusionRole : uint8_t {
     erWipeTower,
     erCustom,
     erFlush,
+    erSeamTower,
     // Extrusion role for a collection with multiple extrusion roles.
     erMixed,
     erCount

@@ -192,6 +192,12 @@ bool Print::invalidate_state_by_config_options(const ConfigOptionResolver & /* n
         //OrcaSlicer
         "seam_gap",
         "first_layer_inset_start",
+        "seam_tower",
+        "seam_tower_gap",
+        "seam_tower_depth",
+        "seam_tower_length",
+        "seam_tower_in_holes",
+        "seam_tower_min_size",
         "wipe_speed"
         "default_jerk",
         "outer_wall_jerk",

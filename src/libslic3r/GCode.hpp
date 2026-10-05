@@ -15,6 +15,7 @@
 #include "GCode/ToolOrdering.hpp"
 #include "GCode/WipeTower.hpp"
 #include "GCode/SeamPlacer.hpp"
+#include "GCode/SeamTowerPlanner.hpp"
 #include "GCode/GCodeProcessor.hpp"
 #include "EdgeGrid.hpp"
 #include "GCode/ThumbnailData.hpp"
@@ -424,6 +425,9 @@ private:
     std::string     change_layer(coordf_t print_z);
     std::string     extrude_entity(const ExtrusionEntity &entity, std::string description = "", double speed = -1.);
     std::string     extrude_loop(ExtrusionLoop loop, std::string description, double speed = -1.);
+    std::string     extrude_seam_tower_paths(const ExtrusionEntityCollection &tower);
+    std::string     extrude_seam_tower_then_hop(const ExtrusionEntityCollection &tower, const Point &loop_start);
+    std::string     extrude_unmatched_seam_towers();
     std::string     extrude_inset_lead_in(const ExtrusionPath &ref_path, const Point &wall_start);
     std::string     extrude_multi_path(ExtrusionMultiPath multipath, std::string description = "", double speed = -1.);
     std::string     extrude_path(ExtrusionPath path, std::string description = "", double speed = -1.);
@@ -535,6 +539,7 @@ private:
     std::set<ObjectID>              m_objSupportsWithBrim; // indicates the objs' supports with brim
     // Cache for custom seam enforcers/blockers for each layer.
     SeamPlacer                          m_seam_placer;
+    SeamTowerPlanner                    m_seam_tower_planner;
 
     /* Origin of print coordinates expressed in unscaled G-code coordinates.
        This affects the input arguments supplied to the extrude*() and travel_to()

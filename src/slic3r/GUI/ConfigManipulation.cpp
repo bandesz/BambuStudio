@@ -904,6 +904,10 @@ void ConfigManipulation::toggle_print_fff_options(DynamicPrintConfig *config, in
     for (auto el : {"sparse_infill_lattice_angle_1", "sparse_infill_lattice_angle_2"}) toggle_line(el, lattice_options);
 
     bool has_spiral_vase         = config->opt_bool("spiral_mode");
+    toggle_field("seam_tower", have_perimeters && !has_spiral_vase);
+    bool have_seam_tower = have_perimeters && !has_spiral_vase && config->opt_bool("seam_tower");
+    for (auto el : {"seam_tower_gap", "seam_tower_depth", "seam_tower_length", "seam_tower_in_holes", "seam_tower_min_size"})
+        toggle_line(el, have_seam_tower);
     toggle_line("spiral_mode_smooth", has_spiral_vase);
     toggle_line("spiral_mode_max_xy_smoothing", config->opt_bool("spiral_mode_smooth"));
     toggle_field("z_direction_outwall_speed_continuous", !has_spiral_vase);
