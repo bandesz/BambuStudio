@@ -233,6 +233,8 @@ public:
 
     std::string get_icon_filename(bool b_dark_mode) const override;
     bool        wants_enter_leave_snapshots() const override { return true; }
+    std::string get_gizmo_entering_text() const override { return "Entering Cut"; }
+    std::string get_gizmo_leaving_text() const override { return "Leaving Cut"; }
 
 protected:
     virtual bool on_init();
