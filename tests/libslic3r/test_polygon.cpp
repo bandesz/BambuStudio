@@ -1,5 +1,9 @@
 #include <catch2/catch.hpp>
 
+#include <algorithm>
+#include <vector>
+
+#include "libslic3r/BridgeOverInfill.hpp"
 #include "libslic3r/Point.hpp"
 #include "libslic3r/Polygon.hpp"
 
@@ -147,4 +151,23 @@ SCENARIO("Remove collinear points from Polygon", "[Polygon]") {
             }
         }
     }
+}
+
+TEST_CASE("Bridge over infill scan sections are strictly ordered by start Y", "[Polygon][BridgeOverInfill]") {
+    const Line lower{Point{0, 0}, Point{0, 100}};
+    const Line upper{Point{0, 200}, Point{0, 300}};
+    const Line overlap_low{Point{0, 0}, Point{0, 150}};
+    const Line overlap_high{Point{0, 100}, Point{0, 250}};
+
+    REQUIRE_FALSE(bridge_over_infill_section_less(lower, lower));
+    REQUIRE(bridge_over_infill_section_less(overlap_low, overlap_high));
+    REQUIRE_FALSE(bridge_over_infill_section_less(overlap_high, overlap_low));
+
+    std::vector<Line> sections{upper, lower, overlap_high, overlap_low};
+    std::sort(sections.begin(), sections.end(), bridge_over_infill_section_less);
+    REQUIRE(sections[0].a.y() == 0);
+    REQUIRE(sections[1].a.y() == 0);
+    REQUIRE(sections[0].b.y() <= sections[1].b.y());
+    REQUIRE(sections[2].a.y() == 100);
+    REQUIRE(sections[3].a.y() == 200);
 }
