@@ -340,6 +340,14 @@ endif ()
 if (APPLE)
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Werror=partial-availability -Werror=unguarded-availability -Werror=unguarded-availability-new")
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Werror=partial-availability -Werror=unguarded-availability -Werror=unguarded-availability-new")
+    # Xcode's Release configuration here is -O0 and does not define NDEBUG, so
+    # assert() aborts. At -O0, Xcode also defaults CLANG_CXX_STANDARD_LIBRARY_HARDENING
+    # to "debug", and libc++ then aborts inside checks such as std::sort.
+    # Match the Makefile Release build: asserts off, libc++ hardening off.
+    add_compile_definitions(
+        $<$<OR:$<CONFIG:Release>,$<CONFIG:RelWithDebInfo>,$<CONFIG:MinSizeRel>>:NDEBUG>
+    )
+    set(CMAKE_XCODE_ATTRIBUTE_CLANG_CXX_STANDARD_LIBRARY_HARDENING "none")
 endif ()
 
 if(MSVC)
