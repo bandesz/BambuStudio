@@ -369,6 +369,15 @@ if (APPLE)
     # Xcode generator：只让 Release 配置生成独立 .dSYM，Debug 保持原速
     set(CMAKE_XCODE_ATTRIBUTE_GCC_GENERATE_DEBUGGING_SYMBOLS "YES")
     set(CMAKE_XCODE_ATTRIBUTE_DEBUG_INFORMATION_FORMAT[variant=Release] "dwarf-with-dsym")
+
+    # Xcode's Release configuration here is -O0 and does not define NDEBUG, so
+    # assert() aborts. At -O0, Xcode also defaults CLANG_CXX_STANDARD_LIBRARY_HARDENING
+    # to "debug", and libc++ then aborts inside checks such as std::sort.
+    # Match the Makefile Release build: asserts off, libc++ hardening off.
+    add_compile_definitions(
+        $<$<OR:$<CONFIG:Release>,$<CONFIG:RelWithDebInfo>,$<CONFIG:MinSizeRel>>:NDEBUG>
+    )
+    set(CMAKE_XCODE_ATTRIBUTE_CLANG_CXX_STANDARD_LIBRARY_HARDENING "none")
 endif ()
 
 if(MSVC)
