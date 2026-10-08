@@ -17,6 +17,7 @@
 #include "Fill/FillAdaptive.hpp"
 #include "Fill/FillLightning.hpp"
 #include "Format/STL.hpp"
+#include "BridgeOverInfill.hpp"
 #include "InternalBridgeDetector.hpp"
 #include "AABBTreeLines.hpp"
 
@@ -2685,8 +2686,7 @@ void PrintObject::bridge_over_infill()
                 polygon_sections[i].erase(std::remove_if(polygon_sections[i].begin(), polygon_sections[i].end(),
                     [](const Line &s) { return s.a == s.b; }),
                     polygon_sections[i].end());
-                std::sort(polygon_sections[i].begin(), polygon_sections[i].end(),
-                    [](const Line &a, const Line &b) { return a.a.y() < b.b.y(); });
+                std::sort(polygon_sections[i].begin(), polygon_sections[i].end(), bridge_over_infill_section_less);
             }
 
             // reconstruct polygon from polygon sections

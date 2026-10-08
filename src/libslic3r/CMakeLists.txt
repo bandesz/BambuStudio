@@ -241,6 +241,7 @@ set(lisbslic3r_sources
     Geometry/VoronoiUtilsCgal.hpp
     Geometry/VoronoiVisualUtils.hpp
     Int128.hpp
+    BridgeOverInfill.hpp
     InternalBridgeDetector.cpp
     InternalBridgeDetector.hpp
     JumpPointSearch.hpp
