@@ -894,6 +894,45 @@ else ()
     install(DIRECTORY "${SLIC3R_RESOURCES_DIR}/" DESTINATION "${CMAKE_INSTALL_PREFIX}/resources")
 endif ()
 
+# The macOS SDK usr/include is already on the compiler's default search path,
+# after libc++. Listing it again as -isystem puts the C math.h ahead of
+# libc++'s math.h when the path spelling differs from the compiler SDK
+# (MacOSX.sdk vs MacOSX27.2.sdk). #include <math.h> then defines signbit as a
+# macro and libc++'s signbit() declaration fails.
+function(slic3r_drop_macos_sdk_include_dir target)
+    if(NOT APPLE OR NOT TARGET "${target}")
+        return()
+    endif()
+    get_target_property(_incs "${target}" INTERFACE_INCLUDE_DIRECTORIES)
+    if(NOT _incs)
+        return()
+    endif()
+    set(_kept "")
+    foreach(_inc IN LISTS _incs)
+        if(_inc MATCHES "/SDKs/MacOSX[^/]*\\.sdk/usr/include$")
+            continue()
+        endif()
+        list(APPEND _kept "${_inc}")
+    endforeach()
+    set_property(TARGET "${target}" PROPERTY INTERFACE_INCLUDE_DIRECTORIES "${_kept}")
+endfunction()
+
+function(slic3r_drop_macos_sdk_includes_under dir)
+    get_property(_imported DIRECTORY "${dir}" PROPERTY IMPORTED_TARGETS)
+    get_property(_built DIRECTORY "${dir}" PROPERTY BUILDSYSTEM_TARGETS)
+    foreach(_t IN LISTS _imported _built)
+        slic3r_drop_macos_sdk_include_dir("${_t}")
+    endforeach()
+    get_property(_subs DIRECTORY "${dir}" PROPERTY SUBDIRECTORIES)
+    foreach(_s IN LISTS _subs)
+        slic3r_drop_macos_sdk_includes_under("${_s}")
+    endforeach()
+endfunction()
+
+if(APPLE)
+    slic3r_drop_macos_sdk_includes_under("${CMAKE_SOURCE_DIR}")
+endif()
+
 if (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT FLATPAK)
     set(LIBRARY_FILES
     ${LIBDIR_BIN}/libavcodec.so.61
