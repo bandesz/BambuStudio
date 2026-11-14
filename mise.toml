@@ -1,0 +1,13 @@
+# Host toolchain for local builds. Third-party libraries still come from BuildMac.sh.
+# Xcode is installed from the App Store. Homebrew packages used by the deps build
+# are checked by scripts/mac_build.sh and are not installed here.
+
+[settings]
+auto_install = true
+
+[tools]
+cmake = "3.31"
+
+[tasks.build]
+description = "Build Bambu Studio for this Mac with Xcode and deployment target 12.0. Builds third-party deps when deps/build/<arch>/BambuStudio_deps/usr/local is missing."
+run = "bash scripts/mac_build.sh"
