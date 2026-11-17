@@ -1319,6 +1319,9 @@ bool PrintObject::invalidate_state_by_config_options(
                 steps.emplace_back(posSlice);
             steps.emplace_back(posPerimeters);
             steps.emplace_back(posSupportMaterial);
+        } else if (opt_key == "reserve_outer_wall") {
+            steps.emplace_back(posPerimeters);
+            steps.emplace_back(posPrepareInfill);
         } else if (opt_key == "bridge_flow") {
             steps.emplace_back(posPerimeters);
             steps.emplace_back(posInfill);

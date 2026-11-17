@@ -1709,6 +1709,16 @@ StringObjectException Print::validate(StringObjectException *warning, Polygons* 
 			warning->string = L("Precise outer wall will be ignored unless the order of walls is set to inner/outer");
 			warning->opt_key = "precise_outer_wall";
 		}
+
+		if (warning != nullptr && warning->string.empty() && m_default_region_config.reserve_outer_wall && !m_config.spiral_mode) {
+			if (m_default_region_config.wall_sequence != WallSequence::OuterInner) {
+				warning->string = L("Reserve outer wall is ignored unless the order of walls is outer/inner");
+				warning->opt_key = "reserve_outer_wall";
+			} else if (m_default_object_config.wall_generator != PerimeterGeneratorType::Classic) {
+				warning->string = L("Reserve outer wall is ignored unless the wall generator is Classic");
+				warning->opt_key = "reserve_outer_wall";
+			}
+		}
     }
 
     return {};

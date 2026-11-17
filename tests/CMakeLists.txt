@@ -37,5 +37,6 @@ add_subdirectory(filament_group)
 add_subdirectory(narrow_bottom_infill)
 add_subdirectory(inset_start)
 add_subdirectory(seam_tower)
+add_subdirectory(reserve_outer_wall)
 add_subdirectory(cpp17 EXCLUDE_FROM_ALL)    # does not have to be built all the time
 # add_subdirectory(example)

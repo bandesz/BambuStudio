@@ -3574,6 +3574,13 @@ void PrintConfigDef::init_fff_params()
     def->mode = comDevelop;
     def->set_default_value(new ConfigOptionBool{false});
 
+    def           = this->add("reserve_outer_wall", coBool);
+    def->label    = L("Reserve outer wall");
+    def->category = L("Quality");
+    def->tooltip  = L("When the outer wall is printed before the inner walls, keep later lines out of the outer bead. A later line is printed thinner to fit the remaining space, and it is skipped when that space is below the minimum wall width. Ignored unless the wall generator is Classic and the wall order is outer/inner.");
+    def->mode     = comAdvanced;
+    def->set_default_value(new ConfigOptionBool{false});
+
     def = this->add("gap_infill_speed", coFloats);
     def->label = L("Gap infill");
     def->category = L("Speed");
