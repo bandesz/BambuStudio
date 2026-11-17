@@ -980,7 +980,7 @@ void PerimeterGenerator::process_classic()
         this->config->reserve_outer_wall.value &&
         this->object_config->wall_generator.value == PerimeterGeneratorType::Classic &&
         this->config->wall_sequence.value == WallSequence::OuterInner &&
-        !this->m_spiral_vase;
+        !this->print_config->spiral_mode.value;
 
     Surfaces all_surfaces = this->slices->surfaces;
     process_no_bridge(all_surfaces, perimeter_spacing, ext_perimeter_width);

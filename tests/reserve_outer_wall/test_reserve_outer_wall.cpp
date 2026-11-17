@@ -173,7 +173,7 @@ TriangleMesh wall_with_wedge()
     return wall;
 }
 
-void slice_wall(Print &print, std::initializer_list<ConfigBase::SetDeserializeItem> extra)
+DynamicPrintConfig wall_config(std::initializer_list<ConfigBase::SetDeserializeItem> extra)
 {
     DynamicPrintConfig config = DynamicPrintConfig::full_print_config();
     config.set_deserialize_strict({
@@ -204,23 +204,55 @@ void slice_wall(Print &print, std::initializer_list<ConfigBase::SetDeserializeIt
         {"reserve_outer_wall", true},
     });
     config.set_deserialize_strict(extra);
+    return config;
+}
 
-    Model        model;
+// Partial modifier over the wall, including the wedge, so a merged follower can own fill.
+TriangleMesh partial_wall_modifier_mesh()
+{
+    TriangleMesh mesh = make_cube(20., 3., 10.);
+    return mesh;
+}
+
+enum class WallModifier { None, InfillDensity, ReserveOff };
+
+void add_wall_object(Model &model, WallModifier modifier)
+{
     ModelObject *object = model.add_object();
     object->name        = "wall-wedge";
     object->add_volume(wall_with_wedge());
+    if (modifier != WallModifier::None) {
+        ModelVolume *volume = object->add_volume(partial_wall_modifier_mesh(), ModelVolumeType::PARAMETER_MODIFIER);
+        if (modifier == WallModifier::InfillDensity)
+            volume->config.set_key_value("sparse_infill_density", new ConfigOptionPercent(40));
+        else
+            volume->config.set_key_value("reserve_outer_wall", new ConfigOptionBool(false));
+    }
     object->add_instance();
     object->ensure_on_bed();
-    print.auto_assign_extruders(object);
+}
+
+void slice_model(Print &print, Model &model, const DynamicPrintConfig &config, StringObjectException *warning_out)
+{
+    REQUIRE_FALSE(model.objects.empty());
+    print.auto_assign_extruders(model.objects.front());
     print.apply(model, config);
 
-    StringObjectException warning;
-    const StringObjectException error = print.validate(&warning);
+    StringObjectException local_warning;
+    StringObjectException *warning = warning_out != nullptr ? warning_out : &local_warning;
+    const StringObjectException error = print.validate(warning);
     INFO(error.string);
-    INFO(warning.string);
+    INFO(warning->string);
     REQUIRE(error.string.empty());
     print.set_status_silent();
     print.process();
+}
+
+void slice_wall(Print &print, std::initializer_list<ConfigBase::SetDeserializeItem> extra, StringObjectException *warning_out = nullptr)
+{
+    Model model;
+    add_wall_object(model, WallModifier::None);
+    slice_model(print, model, wall_config(extra), warning_out);
 }
 
 // Layer::slice_z is the midplane the mesh is sliced on.
@@ -413,6 +445,31 @@ double fill_outside_interior_mm2(const Layer &layer)
         outside += std::abs(area(diff_ex(fill, region->reserved_outer_wall_interior))) * SCALING_FACTOR * SCALING_FACTOR;
     }
     return outside;
+}
+
+double fill_outside_region_interior_mm2(const LayerRegion &region)
+{
+    ExPolygons fill;
+    fill.reserve(region.fill_surfaces.surfaces.size());
+    for (const Surface &surface : region.fill_surfaces.surfaces)
+        fill.emplace_back(surface.expolygon);
+    if (fill.empty() || region.reserved_outer_wall_interior.empty())
+        return 0.;
+    return std::abs(area(diff_ex(fill, region.reserved_outer_wall_interior))) * SCALING_FACTOR * SCALING_FACTOR;
+}
+
+Layer *mutable_layer_at_slice(Print &print, double slice_z)
+{
+    REQUIRE_FALSE(print.objects_mutable().empty());
+    PrintObject *object = print.objects_mutable().front();
+    Layer       *found  = nullptr;
+    for (Layer *layer : object->layers()) {
+        if (std::abs(layer->slice_z - slice_z) < 1e-6)
+            found = layer;
+    }
+    INFO("slice plane " << slice_z << " layers " << object->layer_count());
+    REQUIRE(found != nullptr);
+    return found;
 }
 
 void collect_object_paths(const Print &print, std::vector<const ExtrusionPath *> &out)
@@ -633,4 +690,139 @@ TEST_CASE("Reserve outer wall off does not clip infill near the wedge top", "[Re
     const double outer_overlap = max_fill_overlap_mm2(paths, outer);
     INFO("fill overlap with outer bead at 5.9 off " << outer_overlap);
     REQUIRE(outer_overlap > 0.01);
+}
+
+TEST_CASE("Spiral vase ignores reserve outer wall on every layer including bottom shells", "[ReserveOuterWall]")
+{
+    Print on;
+    Print off;
+    StringObjectException on_warning;
+    StringObjectException off_warning;
+    slice_wall(on, {{"spiral_mode", true}}, &on_warning);
+    slice_wall(off, {{"spiral_mode", true}, {"reserve_outer_wall", false}}, &off_warning);
+
+    INFO(on_warning.string);
+    INFO(on_warning.opt_key);
+    INFO(off_warning.string);
+    INFO(off_warning.opt_key);
+    REQUIRE(on_warning.string == off_warning.string);
+    REQUIRE(on_warning.opt_key == off_warning.opt_key);
+    REQUIRE(on_warning.opt_key != "reserve_outer_wall");
+
+    REQUIRE(layer_at_slice(on, 0.1) != nullptr);
+    REQUIRE(layer_at_slice(off, 0.1) != nullptr);
+    std::vector<const ExtrusionPath *> on_paths;
+    std::vector<const ExtrusionPath *> off_paths;
+    collect_object_paths(on, on_paths);
+    collect_object_paths(off, off_paths);
+    const double deviation = polyline_deviation_mm(on_paths, off_paths);
+    INFO("polyline deviation " << deviation);
+    REQUIRE(deviation <= 0.01);
+    for (const Layer *layer : on.objects().front()->layers())
+        REQUIRE_FALSE(interior_nonempty(*layer));
+}
+
+TEST_CASE("Infill density modifier keeps each region's fill inside its own reserved interior", "[ReserveOuterWall]")
+{
+    Model model;
+    add_wall_object(model, WallModifier::InfillDensity);
+
+    Print print;
+    slice_model(print, model, wall_config({}), nullptr);
+    const Layer *top = layer_at_slice(print, 5.9);
+    REQUIRE(top->regions().size() >= 2);
+
+    size_t filled = 0;
+    for (const Layer *layer : print.objects().front()->layers()) {
+        for (const LayerRegion *region : layer->regions()) {
+            if (region->fill_surfaces.empty())
+                continue;
+            ++filled;
+            INFO("slice_z " << layer->slice_z << " region " << region->region().print_object_region_id());
+            REQUIRE_FALSE(region->reserved_outer_wall_interior.empty());
+            const double outside = fill_outside_region_interior_mm2(*region);
+            INFO("fill outside own interior " << outside);
+            REQUIRE(outside <= 0.01);
+        }
+    }
+    REQUIRE(filled > 0);
+
+    const std::vector<const ExtrusionPath *> top_paths = layer_paths(*top);
+    const ExPolygons                         top_outer = outer_bead_coverage(top_paths);
+    REQUIRE_FALSE(top_outer.empty());
+    const double top_overlap = max_fill_overlap_mm2(top_paths, top_outer);
+    INFO("fill overlap with outer bead at 5.9 " << top_overlap);
+    REQUIRE(top_overlap <= 0.01);
+}
+
+TEST_CASE("A modifier with reserve outer wall off does not share the part interior", "[ReserveOuterWall]")
+{
+    Model model;
+    add_wall_object(model, WallModifier::ReserveOff);
+
+    Print print;
+    slice_model(print, model, wall_config({}), nullptr);
+    const Layer *top = layer_at_slice(print, 5.9);
+    REQUIRE(top->regions().size() >= 2);
+
+    const LayerRegion *part     = nullptr;
+    const LayerRegion *modifier = nullptr;
+    for (const LayerRegion *region : top->regions()) {
+        if (region->region().config().reserve_outer_wall.value)
+            part = region;
+        else
+            modifier = region;
+    }
+    REQUIRE(part != nullptr);
+    REQUIRE(modifier != nullptr);
+    REQUIRE(modifier->reserved_outer_wall_interior.empty());
+    REQUIRE_FALSE(part->reserved_outer_wall_interior.empty());
+    REQUIRE_FALSE(modifier->perimeters.empty());
+}
+
+TEST_CASE("A region with empty slices clears its reserved outer wall interior", "[ReserveOuterWall]")
+{
+    Model model;
+    add_wall_object(model, WallModifier::InfillDensity);
+
+    Print print;
+    slice_model(print, model, wall_config({}), nullptr);
+    Layer *layer = mutable_layer_at_slice(print, 1.9);
+    REQUIRE_FALSE(layer->regions().empty());
+    LayerRegion *cleared = layer->get_region(0);
+    cleared->slices.clear();
+    cleared->reserved_outer_wall_interior = {
+        ExPolygon{Point::new_scale(0., 0.), Point::new_scale(1., 0.), Point::new_scale(0., 1.)}};
+    REQUIRE_FALSE(cleared->reserved_outer_wall_interior.empty());
+    layer->make_perimeters();
+    REQUIRE(cleared->reserved_outer_wall_interior.empty());
+}
+
+TEST_CASE("Re-slicing a density modifier with the checkbox off leaves every interior empty", "[ReserveOuterWall]")
+{
+    Model              model;
+    DynamicPrintConfig config = wall_config({});
+    add_wall_object(model, WallModifier::InfillDensity);
+
+    Print print;
+    slice_model(print, model, config, nullptr);
+    Layer *top = mutable_layer_at_slice(print, 5.9);
+    REQUIRE(top->regions().size() >= 2);
+    REQUIRE(interior_nonempty(*top));
+    const ExPolygon stale{Point::new_scale(0., 0.), Point::new_scale(2., 0.), Point::new_scale(0., 2.)};
+    for (Layer *layer : print.objects_mutable().front()->layers()) {
+        for (LayerRegion *region : layer->regions())
+            region->reserved_outer_wall_interior = {stale};
+    }
+
+    config.set_deserialize_strict({{"reserve_outer_wall", false}});
+    StringObjectException warning;
+    slice_model(print, model, config, &warning);
+    INFO(warning.string);
+    INFO(warning.opt_key);
+    REQUIRE(warning.opt_key != "reserve_outer_wall");
+    for (const Layer *sliced : print.objects().front()->layers()) {
+        for (const LayerRegion *region : sliced->regions())
+            REQUIRE(region->reserved_outer_wall_interior.empty());
+    }
 }

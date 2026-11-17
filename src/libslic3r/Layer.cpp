@@ -175,6 +175,7 @@ bool Layer::has_compatible_layer_regions(const PrintRegionConfig &config, const 
     return config.wall_filament == other_config.wall_filament
            && config.wall_loops == other_config.wall_loops
            && config.wall_sequence == other_config.wall_sequence
+           && config.reserve_outer_wall == other_config.reserve_outer_wall
            && config.inner_wall_speed.get_at(get_process_config_idx(config.wall_filament)) == other_config.inner_wall_speed.get_at(get_process_config_idx(config.wall_filament))
            && config.outer_wall_speed.get_at(get_process_config_idx(config.wall_filament)) == other_config.outer_wall_speed.get_at(get_process_config_idx(config.wall_filament))
            && config.gap_infill_speed.get_at(get_process_config_idx(config.wall_filament)) == other_config.gap_infill_speed.get_at(get_process_config_idx(config.wall_filament))
@@ -211,6 +212,7 @@ void Layer::make_perimeters()
  			(*layerm)->perimeters.clear();
  			(*layerm)->fills.clear();
  			(*layerm)->thin_fills.clear();
+ 			(*layerm)->reserved_outer_wall_interior.clear();
     	} else {
 	        size_t region_id = layerm - m_regions.begin();
 	        if (done[region_id])
@@ -280,6 +282,8 @@ void Layer::make_perimeters()
                 //BBS
                 ExPolygons fill_no_overlap;
                 (*layerm)->make_perimeters(new_slices, perimeter_regions, &fill_surfaces, &fill_no_overlap, this->loop_nodes);
+                for (LayerRegion *region : layerms)
+                    region->reserved_outer_wall_interior = (*layerm)->reserved_outer_wall_interior;
 
 	            // assign fill_surfaces to each layer
 	            if (!fill_surfaces.surfaces.empty()) {
