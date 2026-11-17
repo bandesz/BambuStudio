@@ -377,6 +377,44 @@ bool interior_nonempty(const Layer &layer)
     });
 }
 
+bool is_fill_role(ExtrusionRole role)
+{
+    return role != erExternalPerimeter && role != erOverhangPerimeter && role != erPerimeter && role != erGapFill;
+}
+
+bool has_fill_role(const std::vector<const ExtrusionPath *> &paths)
+{
+    return std::any_of(paths.begin(), paths.end(), [](const ExtrusionPath *path) { return is_fill_role(path->role()); });
+}
+
+double max_fill_overlap_mm2(const std::vector<const ExtrusionPath *> &paths, const ExPolygons &bead)
+{
+    double max_area = 0.;
+    for (const ExtrusionPath *path : paths) {
+        if (!is_fill_role(path->role()))
+            continue;
+        max_area = std::max(max_area, overlap_area_mm2(*path, bead));
+    }
+    return max_area;
+}
+
+double fill_outside_interior_mm2(const Layer &layer)
+{
+    double outside = 0.;
+    for (const LayerRegion *region : layer.regions()) {
+        if (region->reserved_outer_wall_interior.empty())
+            continue;
+        ExPolygons fill;
+        fill.reserve(region->fill_surfaces.surfaces.size());
+        for (const Surface &surface : region->fill_surfaces.surfaces)
+            fill.emplace_back(surface.expolygon);
+        if (fill.empty())
+            continue;
+        outside += std::abs(area(diff_ex(fill, region->reserved_outer_wall_interior))) * SCALING_FACTOR * SCALING_FACTOR;
+    }
+    return outside;
+}
+
 void collect_object_paths(const Print &print, std::vector<const ExtrusionPath *> &out)
 {
     for (const Layer *layer : print.objects().front()->layers()) {
@@ -557,4 +595,42 @@ TEST_CASE("Arachne outer/inner ignores reserve outer wall", "[ReserveOuterWall]"
     REQUIRE(deviation <= 0.01);
     for (const Layer *layer : on.objects().front()->layers())
         REQUIRE_FALSE(interior_nonempty(*layer));
+}
+
+TEST_CASE("Reserve outer wall keeps infill inside the interior near the wedge top", "[ReserveOuterWall]")
+{
+    Print print;
+    slice_wall(print, {});
+    const Layer                             *top   = layer_at_slice(print, 5.9);
+    const std::vector<const ExtrusionPath *> paths = layer_paths(*top);
+    REQUIRE(has_role(paths, erPerimeter));
+    REQUIRE(interior_nonempty(*top));
+
+    const ExPolygons outer = outer_bead_coverage(paths);
+    REQUIRE_FALSE(outer.empty());
+    const double outer_overlap = max_fill_overlap_mm2(paths, outer);
+    INFO("fill overlap with outer bead at 5.9 " << outer_overlap);
+    REQUIRE(outer_overlap <= 0.01);
+
+    for (const Layer *layer : print.objects().front()->layers()) {
+        const double outside = fill_outside_interior_mm2(*layer);
+        INFO("slice_z " << layer->slice_z << " fill surface outside interior " << outside);
+        REQUIRE(outside <= 0.01);
+    }
+}
+
+TEST_CASE("Reserve outer wall off does not clip infill near the wedge top", "[ReserveOuterWall]")
+{
+    Print print;
+    slice_wall(print, {{"reserve_outer_wall", false}});
+    const Layer                             *layer = layer_at_slice(print, 5.9);
+    const std::vector<const ExtrusionPath *> paths = layer_paths(*layer);
+    REQUIRE(has_fill_role(paths));
+    REQUIRE_FALSE(interior_nonempty(*layer));
+
+    const ExPolygons outer = outer_bead_coverage(paths);
+    REQUIRE_FALSE(outer.empty());
+    const double outer_overlap = max_fill_overlap_mm2(paths, outer);
+    INFO("fill overlap with outer bead at 5.9 off " << outer_overlap);
+    REQUIRE(outer_overlap > 0.01);
 }

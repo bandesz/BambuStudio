@@ -630,6 +630,24 @@ void PrintObject::make_perimeters()
     this->set_done(posPerimeters);
 }
 
+static void clip_fill_surfaces_to_reserved_interior(LayerRegion &region)
+{
+    if (region.reserved_outer_wall_interior.empty())
+        return;
+
+    Surfaces clipped;
+    clipped.reserve(region.fill_surfaces.surfaces.size());
+    for (const Surface &surface : region.fill_surfaces.surfaces) {
+        ExPolygons pieces = intersection_ex(surface.expolygon, region.reserved_outer_wall_interior);
+        for (ExPolygon &piece : pieces) {
+            if (piece.empty())
+                continue;
+            clipped.emplace_back(surface, std::move(piece));
+        }
+    }
+    region.fill_surfaces.surfaces = std::move(clipped);
+}
+
 void PrintObject::prepare_infill()
 {
     if (! this->set_started(posPrepareInfill))
@@ -710,6 +728,12 @@ void PrintObject::prepare_infill()
     } // for each region
 #endif /* SLIC3R_DEBUG_SLICE_PROCESSING */
 
+    for (Layer *layer : m_layers) {
+        for (LayerRegion *region : layer->m_regions)
+            clip_fill_surfaces_to_reserved_interior(*region);
+        m_print->throw_if_canceled();
+    }
+
     if (m_config.interlocking_beam.value)
         discover_shell_for_perimeters();
     reset_slice_surfaces(slice_surfaces_cpy);
@@ -754,6 +778,12 @@ void PrintObject::prepare_infill()
         layer->export_region_fill_surfaces_to_svg_debug("9_prepare_infill-final");
     } // for each layer
 #endif /* SLIC3R_DEBUG_SLICE_PROCESSING */
+
+    for (Layer *layer : m_layers) {
+        for (LayerRegion *region : layer->m_regions)
+            clip_fill_surfaces_to_reserved_interior(*region);
+        m_print->throw_if_canceled();
+    }
 
     this->set_done(posPrepareInfill);
 }
