@@ -52,6 +52,8 @@ public:
     SurfaceCollection           *fill_surfaces;
     //BBS
     ExPolygons                  *fill_no_overlap;
+    // Slice left after the reserved outer bead. Written only when the feature applies.
+    ExPolygons                  *reserved_outer_wall_interior { nullptr };
 
     //BBS
     Flow                        smaller_ext_perimeter_flow;

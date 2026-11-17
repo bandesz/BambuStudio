@@ -59,6 +59,8 @@ public:
     // Unspecified fill polygons, used for overhang detection ("ensure vertical wall thickness feature")
     // and for re-starting of infills.
     ExPolygons                  fill_expolygons;
+    // Slice minus the reserved outer bead. Empty when reserve outer wall does not apply.
+    ExPolygons                  reserved_outer_wall_interior;
     // collection of surfaces for infill generation
     SurfaceCollection           fill_surfaces;
     // BBS: Unspecified fill polygons, used for interecting when we don't want the infill/perimeter overlap
