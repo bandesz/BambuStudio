@@ -133,6 +133,7 @@ void LayerRegion::make_perimeters(const SurfaceCollection &slices, const Perimet
     this->perimeters.clear();
     this->thin_fills.clear();
     this->reserved_outer_wall_interior.clear();
+    this->reserved_outer_wall_bead.clear();
 
     const PrintConfig &      print_config  = this->layer()->object()->print()->config();
     const PrintRegionConfig &region_config = this->region().config();
@@ -170,6 +171,7 @@ void LayerRegion::make_perimeters(const SurfaceCollection &slices, const Perimet
     g.layer_id              = (int)this->layer()->id();
     g.slice_z               = this->layer()->slice_z;
     g.reserved_outer_wall_interior = &this->reserved_outer_wall_interior;
+    g.reserved_outer_wall_bead     = &this->reserved_outer_wall_bead;
     g.ext_perimeter_flow    = this->flow(frExternalPerimeter);
     g.overhang_flow         = this->bridging_flow(frPerimeter, object_config.thick_bridges);
     g.solid_infill_flow     = this->flow(frSolidInfill);

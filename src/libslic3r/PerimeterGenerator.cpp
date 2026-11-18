@@ -1470,6 +1470,8 @@ void PerimeterGenerator::process_classic()
 
         if (reserve_outer && this->reserved_outer_wall_interior != nullptr)
             append(*this->reserved_outer_wall_interior, reserved_interior);
+        if (reserve_outer && this->reserved_outer_wall_bead != nullptr)
+            append(*this->reserved_outer_wall_bead, outer_bead_ex);
 
         // fill gaps
         if (! gaps.empty()) {

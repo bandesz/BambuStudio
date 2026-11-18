@@ -479,6 +479,39 @@ double fill_outside_region_interior_mm2(const LayerRegion &region)
     return std::abs(area(diff_ex(fill, region.reserved_outer_wall_interior))) * SCALING_FACTOR * SCALING_FACTOR;
 }
 
+double expolygon_overlap_mm2(const ExPolygons &subject, const ExPolygons &clip)
+{
+    if (subject.empty() || clip.empty())
+        return 0.;
+    return std::abs(area(intersection_ex(subject, clip))) * SCALING_FACTOR * SCALING_FACTOR;
+}
+
+ExPolygons fill_surfaces_of(const LayerRegion &region, bool solid)
+{
+    ExPolygons out;
+    for (const Surface &surface : region.fill_surfaces.surfaces)
+        if (surface.is_solid() == solid)
+            out.emplace_back(surface.expolygon);
+    return out;
+}
+
+// Compatible wall settings keep perimeter entities on the first region. A follower's
+// perimeters and thin fills are cleared.
+const LayerRegion *merged_follower(const Layer &layer, bool solid_fill)
+{
+    bool leader = false;
+    const LayerRegion *follower = nullptr;
+    for (const LayerRegion *region : layer.regions()) {
+        if (!region->perimeters.empty())
+            leader = true;
+        if (!region->perimeters.empty() || !region->thin_fills.empty())
+            continue;
+        if (!fill_surfaces_of(*region, solid_fill).empty())
+            follower = region;
+    }
+    return leader ? follower : nullptr;
+}
+
 Layer *mutable_layer_at_slice(Print &print, double slice_z)
 {
     REQUIRE_FALSE(print.objects_mutable().empty());
@@ -781,6 +814,71 @@ TEST_CASE("Infill density modifier keeps each region's fill inside its own reser
     REQUIRE(top_overlap <= 0.02);
 }
 
+TEST_CASE("A merged follower cuts solid infill to the outer bead and keeps sparse infill out of the core", "[ReserveOuterWall]")
+{
+    Model model;
+    add_wall_object(model, WallModifier::InfillDensity);
+
+    Print print;
+    slice_model(print, model, wall_config({}), nullptr);
+    const Layer *top = layer_at_slice(print, 5.9);
+    REQUIRE(top->regions().size() >= 2);
+
+    const LayerRegion *solid_follower = merged_follower(*top, true);
+    REQUIRE(solid_follower != nullptr);
+    REQUIRE(solid_follower->perimeters.empty());
+    REQUIRE(solid_follower->thin_fills.empty());
+
+    const ExPolygons bead = outer_bead_coverage(layer_paths(*top));
+    REQUIRE_FALSE(bead.empty());
+    const ExPolygons solid = fill_surfaces_of(*solid_follower, true);
+    const double solid_on_bead = expolygon_overlap_mm2(solid, bead);
+    INFO("follower solid fill on outer bead " << solid_on_bead);
+    REQUIRE(solid_on_bead <= 0.01);
+
+    REQUIRE_FALSE(solid_follower->reserved_outer_wall_bead.empty());
+    const double solid_on_stored = expolygon_overlap_mm2(solid, solid_follower->reserved_outer_wall_bead);
+    INFO("follower solid fill on stored bead " << solid_on_stored);
+    REQUIRE(solid_on_stored <= 0.01);
+
+    // The 1 mm wall has no sparse surface on the follower. A wider cube does.
+    Model        sparse_model;
+    ModelObject *sparse_object = sparse_model.add_object();
+    sparse_object->name        = "sparse-cube";
+    sparse_object->add_volume(make_cube(20., 20., 4.));
+    ModelVolume *sparse_modifier = sparse_object->add_volume(make_cube(10., 20., 4.), ModelVolumeType::PARAMETER_MODIFIER);
+    sparse_modifier->config.set_key_value("sparse_infill_density", new ConfigOptionPercent(40));
+    sparse_object->add_instance();
+    sparse_object->ensure_on_bed();
+
+    Print sparse_print;
+    slice_model(sparse_print, sparse_model, wall_config({
+        {"top_shell_layers", 2},
+        {"bottom_shell_layers", 2},
+        {"top_shell_thickness", 0},
+        {"bottom_shell_thickness", 0},
+        {"ensure_vertical_shell_thickness", "disabled"},
+    }), nullptr);
+
+    bool   found_sparse     = false;
+    double max_sparse_core  = 0.;
+    for (const Layer *layer : sparse_print.objects().front()->layers()) {
+        const LayerRegion *sparse_follower = merged_follower(*layer, false);
+        if (sparse_follower == nullptr)
+            continue;
+        found_sparse = true;
+        REQUIRE(sparse_follower->perimeters.empty());
+        REQUIRE(sparse_follower->thin_fills.empty());
+        const ExPolygons sparse_bead = outer_bead_coverage(layer_paths(*layer));
+        REQUIRE_FALSE(sparse_bead.empty());
+        const double sparse_on_core = expolygon_overlap_mm2(fill_surfaces_of(*sparse_follower, false), outer_bead_core(sparse_bead));
+        INFO("slice_z " << layer->slice_z << " follower sparse fill on outer bead core " << sparse_on_core);
+        max_sparse_core = std::max(max_sparse_core, sparse_on_core);
+    }
+    REQUIRE(found_sparse);
+    REQUIRE(max_sparse_core <= 0.02);
+}
+
 TEST_CASE("A modifier with reserve outer wall off does not share the part interior", "[ReserveOuterWall]")
 {
     Model model;
@@ -819,9 +917,13 @@ TEST_CASE("A region with empty slices clears its reserved outer wall interior", 
     cleared->slices.clear();
     cleared->reserved_outer_wall_interior = {
         ExPolygon{Point::new_scale(0., 0.), Point::new_scale(1., 0.), Point::new_scale(0., 1.)}};
+    cleared->reserved_outer_wall_bead = {
+        ExPolygon{Point::new_scale(0., 0.), Point::new_scale(1., 0.), Point::new_scale(0., 1.)}};
     REQUIRE_FALSE(cleared->reserved_outer_wall_interior.empty());
+    REQUIRE_FALSE(cleared->reserved_outer_wall_bead.empty());
     layer->make_perimeters();
     REQUIRE(cleared->reserved_outer_wall_interior.empty());
+    REQUIRE(cleared->reserved_outer_wall_bead.empty());
 }
 
 TEST_CASE("Re-slicing a density modifier with the checkbox off leaves every interior empty", "[ReserveOuterWall]")
@@ -837,8 +939,10 @@ TEST_CASE("Re-slicing a density modifier with the checkbox off leaves every inte
     REQUIRE(interior_nonempty(*top));
     const ExPolygon stale{Point::new_scale(0., 0.), Point::new_scale(2., 0.), Point::new_scale(0., 2.)};
     for (Layer *layer : print.objects_mutable().front()->layers()) {
-        for (LayerRegion *region : layer->regions())
+        for (LayerRegion *region : layer->regions()) {
             region->reserved_outer_wall_interior = {stale};
+            region->reserved_outer_wall_bead     = {stale};
+        }
     }
 
     config.set_deserialize_strict({{"reserve_outer_wall", false}});
@@ -848,7 +952,32 @@ TEST_CASE("Re-slicing a density modifier with the checkbox off leaves every inte
     INFO(warning.opt_key);
     REQUIRE(warning.opt_key != "reserve_outer_wall");
     for (const Layer *sliced : print.objects().front()->layers()) {
-        for (const LayerRegion *region : sliced->regions())
+        for (const LayerRegion *region : sliced->regions()) {
             REQUIRE(region->reserved_outer_wall_interior.empty());
+            REQUIRE(region->reserved_outer_wall_bead.empty());
+        }
     }
+}
+
+TEST_CASE("Reserve outer wall off leaves the stored bead empty and does not cut follower solid fill", "[ReserveOuterWall]")
+{
+    Model model;
+    add_wall_object(model, WallModifier::InfillDensity);
+
+    Print print;
+    slice_model(print, model, wall_config({{"reserve_outer_wall", false}}), nullptr);
+    const Layer *top = layer_at_slice(print, 5.9);
+    const LayerRegion *follower = merged_follower(*top, true);
+    REQUIRE(follower != nullptr);
+
+    for (const Layer *layer : print.objects().front()->layers()) {
+        for (const LayerRegion *region : layer->regions())
+            REQUIRE(region->reserved_outer_wall_bead.empty());
+    }
+
+    const ExPolygons bead = outer_bead_coverage(layer_paths(*top));
+    REQUIRE_FALSE(bead.empty());
+    const double solid_on_bead = expolygon_overlap_mm2(fill_surfaces_of(*follower, true), bead);
+    INFO("follower solid fill on outer bead with reserve off " << solid_on_bead);
+    REQUIRE(solid_on_bead > 0.01);
 }

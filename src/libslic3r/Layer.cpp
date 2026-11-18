@@ -213,6 +213,7 @@ void Layer::make_perimeters()
  			(*layerm)->fills.clear();
  			(*layerm)->thin_fills.clear();
  			(*layerm)->reserved_outer_wall_interior.clear();
+ 			(*layerm)->reserved_outer_wall_bead.clear();
     	} else {
 	        size_t region_id = layerm - m_regions.begin();
 	        if (done[region_id])
@@ -282,8 +283,10 @@ void Layer::make_perimeters()
                 //BBS
                 ExPolygons fill_no_overlap;
                 (*layerm)->make_perimeters(new_slices, perimeter_regions, &fill_surfaces, &fill_no_overlap, this->loop_nodes);
-                for (LayerRegion *region : layerms)
+                for (LayerRegion *region : layerms) {
                     region->reserved_outer_wall_interior = (*layerm)->reserved_outer_wall_interior;
+                    region->reserved_outer_wall_bead     = (*layerm)->reserved_outer_wall_bead;
+                }
 
 	            // assign fill_surfaces to each layer
 	            if (!fill_surfaces.surfaces.empty()) {

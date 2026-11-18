@@ -61,6 +61,8 @@ public:
     ExPolygons                  fill_expolygons;
     // Slice minus the reserved outer bead. Empty when reserve outer wall does not apply.
     ExPolygons                  reserved_outer_wall_interior;
+    // Full outer bead. Empty when reserve outer wall does not apply.
+    ExPolygons                  reserved_outer_wall_bead;
     // collection of surfaces for infill generation
     SurfaceCollection           fill_surfaces;
     // BBS: Unspecified fill polygons, used for interecting when we don't want the infill/perimeter overlap
