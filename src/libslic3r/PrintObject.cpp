@@ -630,15 +630,58 @@ void PrintObject::make_perimeters()
     this->set_done(posPerimeters);
 }
 
+static void collect_external_bead(const ExtrusionEntity *entity, Polygons &covered)
+{
+    if (entity == nullptr)
+        return;
+    if (const auto *collection = dynamic_cast<const ExtrusionEntityCollection *>(entity)) {
+        for (const ExtrusionEntity *child : collection->entities)
+            collect_external_bead(child, covered);
+        return;
+    }
+    auto add_path = [&](const ExtrusionPath &path) {
+        if (path.role() != erExternalPerimeter && path.role() != erOverhangPerimeter)
+            return;
+        if (path.width <= 0.f || path.polyline.size() < 2)
+            return;
+        Polyline line = path.polyline;
+        const bool closed = line.points.front() == line.points.back() && line.points.size() >= 4;
+        if (closed)
+            line.points.pop_back();
+        append(covered, offset(line, float(scale_(path.width / 2.)), jtRound, scale_(0.01),
+                               closed ? ClipperLib::etClosedLine : ClipperLib::etOpenButt));
+    };
+    if (const auto *path = dynamic_cast<const ExtrusionPath *>(entity))
+        add_path(*path);
+    else if (const auto *multi = dynamic_cast<const ExtrusionMultiPath *>(entity)) {
+        for (const ExtrusionPath &path : multi->paths)
+            add_path(path);
+    } else if (const auto *loop = dynamic_cast<const ExtrusionLoop *>(entity)) {
+        for (const ExtrusionPath &path : loop->paths)
+            add_path(path);
+    }
+}
+
 static void clip_fill_surfaces_to_reserved_interior(LayerRegion &region)
 {
     if (region.reserved_outer_wall_interior.empty())
         return;
 
+    Polygons covered;
+    for (const ExtrusionEntity *entity : region.perimeters.entities)
+        collect_external_bead(entity, covered);
+    for (const ExtrusionEntity *entity : region.thin_fills.entities)
+        collect_external_bead(entity, covered);
+    const ExPolygons outer_bead = union_ex(covered);
+
     Surfaces clipped;
     clipped.reserve(region.fill_surfaces.surfaces.size());
     for (const Surface &surface : region.fill_surfaces.surfaces) {
         ExPolygons pieces = intersection_ex(surface.expolygon, region.reserved_outer_wall_interior);
+        // Solid infill that runs into the outer bead is cut back to the bead's inner
+        // face. Sparse infill keeps the normal overlap. Wall lines are not modified here.
+        if (surface.is_solid() && !outer_bead.empty())
+            pieces = diff_ex(pieces, outer_bead);
         for (ExPolygon &piece : pieces) {
             if (piece.empty())
                 continue;

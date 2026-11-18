@@ -859,59 +859,100 @@ static Polygons to_polygons_with_flag(const ExPolygon& src, const bool contour_f
     return polygons;
 }
 
-
-static Polygons round_centerline_coverage(const Polyline &polyline, float width_mm)
+// A gap line wider than a normal inner wall, and sitting on the outer bead, is pulled
+// back to that inner width. Lines that do not touch the outer bead stay, including the
+// middle line of a three-line wall.
+static void retract_thick_gap_fill_from_outer_bead(ThickPolylines &polylines, const ExPolygons &outer_bead,
+                                                    double inner_width_mm, double height_mm)
 {
-    if (width_mm <= 0.f || polyline.size() < 2)
-        return {};
-    Polyline line = polyline;
-    const bool closed = line.points.front() == line.points.back() && line.points.size() >= 4;
-    if (closed)
-        line.points.pop_back();
-    const float delta = float(scale_(width_mm / 2.f));
-    if (delta <= 0.f)
-        return {};
-    return offset(line, delta, jtRound, scale_(0.01), closed ? ClipperLib::etClosedLine : ClipperLib::etOpenButt);
-}
+    if (outer_bead.empty() || inner_width_mm <= 0. || height_mm <= 0.)
+        return;
+    const double inflation = height_mm * (1. - 0.25 * PI);
+    const double capped_spacing_mm = inner_width_mm - inflation;
+    if (capped_spacing_mm <= 0.)
+        return;
+    const double capped_spacing = scale_(capped_spacing_mm);
 
-// Medial-axis beads whose extrusion width is the local gap, not the inflated spacing-to-width flow.
-static void append_local_gap_fill(const ThickPolylines &polylines, double min_width, double max_width, const Flow &flow,
-                                   ExtrusionEntityCollection &out, Polygons &coverage)
-{
-    for (const ThickPolyline &pl : polylines) {
+    auto nearest_on_bead = [&](const Point &point, bool &inside) {
+        inside = false;
+        double best = std::numeric_limits<double>::max();
+        Point nearest = point;
+        for (const ExPolygon &ex : outer_bead) {
+            if (ex.contains(point))
+                inside = true;
+            auto consider = [&](const Polygon &poly) {
+                for (const Line &line : poly.lines()) {
+                    Point close;
+                    const double distance = line.distance_to_squared(point, &close);
+                    if (distance < best) {
+                        best = distance;
+                        nearest = close;
+                    }
+                }
+            };
+            consider(ex.contour);
+            for (const Polygon &hole : ex.holes)
+                consider(hole);
+        }
+        return nearest;
+    };
+
+    for (ThickPolyline &pl : polylines) {
         if (pl.points.size() < 2 || pl.width.size() < (pl.points.size() - 1) * 2)
             continue;
-        ExtrusionPath path(erGapFill);
-        auto flush = [&]() {
-            if (path.polyline.size() < 2)
-                return;
-            append(coverage, round_centerline_coverage(path.polyline, path.width));
-            out.append(std::move(path));
-            path = ExtrusionPath(erGapFill);
-        };
+        const bool closed = pl.points.front() == pl.points.back();
+        std::vector<Vec2d> shift(pl.points.size(), Vec2d::Zero());
+        std::vector<int> hits(pl.points.size(), 0);
         for (size_t i = 0; i + 1 < pl.points.size(); ++i) {
-            const double w0 = pl.width[2 * i];
-            const double w1 = pl.width[2 * i + 1];
-            if (w0 < min_width || w1 < min_width || w0 >= max_width || w1 >= max_width) {
-                flush();
+            double &w0 = pl.width[2 * i];
+            double &w1 = pl.width[2 * i + 1];
+            const double spacing = std::max(w0, w1);
+            const double emitted = unscale<double>(spacing) + inflation;
+            if (emitted <= inner_width_mm + 0.01)
                 continue;
-            }
-            const float width_mm = unscale<float>(std::min(w0, w1));
-            if (path.polyline.empty()) {
-                const Flow seg = flow.with_width(width_mm);
-                path.polyline.append(pl.points[i]);
-                path.polyline.append(pl.points[i + 1]);
-                path.width       = width_mm;
-                path.height      = flow.height();
-                path.mm3_per_mm  = seg.mm3_per_mm();
-            } else if (std::abs(path.width - width_mm) <= 0.001f && path.polyline.points.back() == pl.points[i]) {
-                path.polyline.append(pl.points[i + 1]);
-            } else {
-                flush();
-                --i;
-            }
+            const Point &a = pl.points[i];
+            const Point &b = pl.points[i + 1];
+            if (a == b)
+                continue;
+            Polyline segment;
+            segment.append(a);
+            segment.append(b);
+            const Polygons covered = offset(segment, float(scale_(emitted / 2.)), jtRound, scale_(0.01), ClipperLib::etOpenButt);
+            if (intersection_ex(covered, outer_bead).empty())
+                continue;
+            const Vec2d mid = (a.cast<double>() + b.cast<double>()) * 0.5;
+            bool inside = false;
+            const Point nearest = nearest_on_bead(Point(coord_t(std::lround(mid.x())), coord_t(std::lround(mid.y()))), inside);
+            const Vec2d nearest_d = nearest.cast<double>();
+            Vec2d away = mid - nearest_d;
+            if (inside)
+                away = nearest_d - mid;
+            const double length = away.norm();
+            if (length < 1.)
+                continue;
+            away *= scale_((emitted - inner_width_mm) / 2.) / length;
+            shift[i] += away;
+            shift[i + 1] += away;
+            ++hits[i];
+            ++hits[i + 1];
+            w0 = capped_spacing;
+            w1 = capped_spacing;
         }
-        flush();
+        if (closed && pl.points.size() >= 2) {
+            const Vec2d end = shift.front() + shift.back();
+            const int end_hits = hits.front() + hits.back();
+            shift.front() = end;
+            shift.back() = end;
+            hits.front() = end_hits;
+            hits.back() = end_hits;
+        }
+        for (size_t i = 0; i < pl.points.size(); ++i) {
+            if (hits[i] == 0)
+                continue;
+            const Vec2d delta = shift[i] / double(hits[i]);
+            pl.points[i].x() += coord_t(std::lround(delta.x()));
+            pl.points[i].y() += coord_t(std::lround(delta.y()));
+        }
     }
 }
 
@@ -1022,7 +1063,7 @@ void PerimeterGenerator::process_classic()
         ExPolygons last        = union_ex(surface.expolygon.simplify_p(surface_simplify_resolution));
         const ExPolygons island_slice = last;
         ExPolygons       reserved_interior;
-        ExPolygons       reserved_inner_coverage;
+        ExPolygons       outer_bead_ex;
         if (last.size() != 1)
             counter_circle_compensation = false;
         ExPolygons gaps;
@@ -1036,8 +1077,6 @@ void PerimeterGenerator::process_classic()
             ThickPolylines thin_walls;
             // we loop one time more than needed in order to find gaps after the last perimeter was applied
             for (int i = 0;; ++ i) {  // outer loop is 0
-                if (reserve_outer && i > 0)
-                    break;
                 // Calculate next onion shell of perimeters.
                 ExPolygons offsets;
                 ExPolygons offsets_with_smaller_width;
@@ -1049,20 +1088,16 @@ void PerimeterGenerator::process_classic()
                         offsets = offset2_ex(last,
                             -float(ext_perimeter_width / 2. + ext_min_spacing / 2. - 1),
                             +float(ext_min_spacing / 2. - 1));
-                        // Reserve outer wall keeps this inset and skips the medial axis outside it.
-                        // The remainder rule below is the only thinned bead.
-                        if (!reserve_outer) {
-                            // the following offset2 ensures almost nothing in @thin_walls is narrower than $min_width
-                            // (actually, something larger than that still may exist due to mitering or other causes)
-                            coord_t min_width = coord_t(scale_(this->ext_perimeter_flow.nozzle_diameter() / 3));
-                            ExPolygons expp = opening_ex(
-                                // medial axis requires non-overlapping geometry
-                                diff_ex(last, offset(offsets, float(ext_perimeter_width / 2.) + ClipperSafetyOffset)),
-                                float(min_width / 2.));
-                            // the maximum thickness of our thin wall area is equal to the minimum thickness of a single loop
-                            for (ExPolygon &ex : expp)
-                                ex.medial_axis(min_width, ext_perimeter_width + ext_perimeter_spacing2, &thin_walls);
-                        }
+                        // the following offset2 ensures almost nothing in @thin_walls is narrower than $min_width
+                        // (actually, something larger than that still may exist due to mitering or other causes)
+                        coord_t min_width = coord_t(scale_(this->ext_perimeter_flow.nozzle_diameter() / 3));
+                        ExPolygons expp = opening_ex(
+                            // medial axis requires non-overlapping geometry
+                            diff_ex(last, offset(offsets, float(ext_perimeter_width / 2.) + ClipperSafetyOffset)),
+                            float(min_width / 2.));
+                        // the maximum thickness of our thin wall area is equal to the minimum thickness of a single loop
+                        for (ExPolygon &ex : expp)
+                            ex.medial_axis(min_width, ext_perimeter_width + ext_perimeter_spacing2, &thin_walls);
                     } else {
                         coord_t ext_perimeter_smaller_width = this->smaller_ext_perimeter_flow.scaled_width();
                         for (const ExPolygon& expolygon : last) {
@@ -1276,7 +1311,8 @@ void PerimeterGenerator::process_classic()
             }
 
             if (reserve_outer) {
-                // Depth-0 centerlines stay as generated. Their round-join coverage is the reserved bead.
+                // Wall loops stay on the classic path. Only the part of the outer bead past the
+                // normal spacing overlap is reserved, so a thicker gap line cannot push that bead.
                 Polygons bead_polys;
                 auto add_outer_bead = [&](const PerimeterGeneratorLoop &loop) {
                     const float width = float(loop.is_smaller_width_perimeter
@@ -1288,38 +1324,12 @@ void PerimeterGenerator::process_classic()
                     add_outer_bead(loop);
                 for (const PerimeterGeneratorLoop &loop : holes[0])
                     add_outer_bead(loop);
-                reserved_interior = bead_polys.empty() ? island_slice : diff_ex(island_slice, union_ex(bead_polys));
-
-                // Nominal inner loops: first centerline is half an inner width inside the interior.
-                // Later loops keep today's inner-to-inner spacing, and their coverage stays inside the interior.
-                if (loop_number >= 1) {
-                    ExPolygons frontier = offset_ex(reserved_interior, -float(perimeter_width / 2.), jtRound, scale_(0.01));
-                    for (const ExPolygon &expolygon : frontier) {
-                        contours[1].emplace_back(PerimeterGeneratorLoop(expolygon.contour, 1, true, false, counter_circle_compensation));
-                        for (const Polygon &hole : expolygon.holes)
-                            holes[1].emplace_back(hole, 1, false, false, is_compensation_hole(hole));
-                    }
-                    for (int depth = 2; depth <= loop_number; ++depth) {
-                        frontier = offset2_ex(frontier,
-                            -float(perimeter_spacing + min_spacing / 2. - 1.),
-                            float(min_spacing / 2. - 1.));
-                        if (frontier.empty())
-                            break;
-                        for (const ExPolygon &expolygon : frontier) {
-                            contours[depth].emplace_back(PerimeterGeneratorLoop(expolygon.contour, depth, true, false, counter_circle_compensation));
-                            for (const Polygon &hole : expolygon.holes)
-                                holes[depth].emplace_back(hole, depth, false, false, is_compensation_hole(hole));
-                        }
-                    }
-                    Polygons inner_cov;
-                    for (int depth = 1; depth <= loop_number; ++depth) {
-                        for (const PerimeterGeneratorLoop &loop : contours[depth])
-                            append(inner_cov, contour_to_polygons(loop.polygon, float(perimeter_width), jtRound, scale_(0.01)));
-                        for (const PerimeterGeneratorLoop &loop : holes[depth])
-                            append(inner_cov, contour_to_polygons(loop.polygon, float(perimeter_width), jtRound, scale_(0.01)));
-                    }
-                    reserved_inner_coverage = intersection_ex(union_ex(inner_cov), reserved_interior);
-                }
+                outer_bead_ex = union_ex(bead_polys);
+                const float allowed = float(scale_(this->layer_height * (1. - 0.25 * PI)));
+                const ExPolygons forbidden = offset_ex(outer_bead_ex, -allowed);
+                reserved_interior = forbidden.empty() ? island_slice : diff_ex(island_slice, forbidden);
+                if (!gaps.empty())
+                    gaps = intersection_ex(gaps, reserved_interior);
             }
 
             // nest loops: holes first
@@ -1458,52 +1468,9 @@ void PerimeterGenerator::process_classic()
             reserved_interior = island_slice;
         } // for each loop of an island
 
-        if (reserve_outer) {
-            if (this->reserved_outer_wall_interior != nullptr)
-                append(*this->reserved_outer_wall_interior, reserved_interior);
+        if (reserve_outer && this->reserved_outer_wall_interior != nullptr)
+            append(*this->reserved_outer_wall_interior, reserved_interior);
 
-            double min_nozzle = this->perimeter_flow.nozzle_diameter();
-            if (!this->print_config->nozzle_diameter.values.empty())
-                min_nozzle = *std::min_element(this->print_config->nozzle_diameter.values.begin(), this->print_config->nozzle_diameter.values.end());
-            const double min_bead_mm = this->object_config->min_bead_width.value / 100. * min_nozzle;
-            const double inner_mm    = this->perimeter_flow.width();
-            const double min_w       = scale_(min_bead_mm);
-            const double max_w       = scale_(inner_mm);
-
-            ExPolygons remainder = diff_ex(reserved_interior, reserved_inner_coverage);
-            ThickPolylines gap_polylines;
-            for (ExPolygon &ex : remainder) {
-                ex.douglas_peucker(surface_simplify_resolution);
-                ex.medial_axis(min_w, max_w, &gap_polylines);
-            }
-            const double min_gap_length = scale_(this->config->filter_out_gap_fill.value);
-            gap_polylines.erase(std::remove_if(gap_polylines.begin(), gap_polylines.end(), [&](const ThickPolyline &p) {
-                return p.length() < min_gap_length;
-            }), gap_polylines.end());
-
-            ExtrusionEntityCollection gap_entities;
-            Polygons gap_covered;
-            append_local_gap_fill(gap_polylines, min_w, max_w, this->perimeter_flow, gap_entities, gap_covered);
-            if (!gap_entities.empty()) {
-                remainder = diff_ex(remainder, union_ex(gap_covered));
-                this->gap_fill->append(std::move(gap_entities.entities));
-            }
-
-            const double overlap_mm = this->config->infill_wall_overlap.get_abs_value(inner_mm);
-            ExPolygons grown = intersection_ex(offset_ex(remainder, float(scale_(overlap_mm))), reserved_interior);
-            // A channel thinner than the infill line cannot hold that line without crossing the outer bead.
-            const float half_infill = float(this->solid_infill_flow.scaled_width()) / 2.f;
-            ExPolygons fillable = offset2_ex(grown, -half_infill, half_infill);
-            Polygons simplified;
-            for (ExPolygon &ex : fillable)
-                ex.simplify_p(this->m_scaled_resolution, &simplified);
-            this->fill_surfaces->append(union_ex(simplified), stInternal);
-
-            Polygons simplified_no;
-            for (ExPolygon &ex : remainder)
-                ex.simplify_p(this->m_scaled_resolution, &simplified_no);
-            append(*this->fill_no_overlap, union_ex(simplified_no));
-        } else {
         // fill gaps
         if (! gaps.empty()) {
             // collapse
@@ -1539,6 +1506,9 @@ void PerimeterGenerator::process_classic()
             polylines.erase(std::remove_if(polylines.begin(), polylines.end(), [&](const ThickPolyline &p) {
                 return p.length()< scale_(this->config->filter_out_gap_fill.value);
             }), polylines.end());
+
+            if (reserve_outer)
+                retract_thick_gap_fill_from_outer_bead(polylines, outer_bead_ex, unscale<double>(perimeter_width), this->layer_height);
 
             if (! polylines.empty()) {
 				ExtrusionEntityCollection gap_fill;
@@ -1608,7 +1578,6 @@ void PerimeterGenerator::process_classic()
             if (!top_fills.empty())
                 polyWithoutOverlap = union_ex(polyWithoutOverlap, top_infill_exp);
             this->fill_no_overlap->insert(this->fill_no_overlap->end(), polyWithoutOverlap.begin(), polyWithoutOverlap.end());
-        }
         }
 
     } // for each island

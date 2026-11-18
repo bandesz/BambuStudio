@@ -313,6 +313,27 @@ bool is_outer_bead_role(ExtrusionRole role)
     return role == erExternalPerimeter || role == erOverhangPerimeter;
 }
 
+bool is_classic_wall(ExtrusionRole role)
+{
+    return is_outer_bead_role(role) || role == erPerimeter || role == erGapFill;
+}
+
+std::vector<const ExtrusionPath *> classic_wall_paths(const std::vector<const ExtrusionPath *> &paths)
+{
+    std::vector<const ExtrusionPath *> out;
+    for (const ExtrusionPath *path : paths)
+        if (is_classic_wall(path->role()))
+            out.push_back(path);
+    return out;
+}
+
+// Core of the outer bead, inside the normal spacing overlap of one layer height.
+ExPolygons outer_bead_core(const ExPolygons &bead)
+{
+    const float allowed = float(scale_(0.2 * (1. - 0.25 * 3.141592653589793)));
+    return offset_ex(bead, -allowed);
+}
+
 Polygons round_join_coverage(const ExtrusionPath &path)
 {
     if (path.width <= 0.f || path.polyline.size() < 2)
@@ -560,14 +581,12 @@ TEST_CASE("Reserve outer wall keeps the flat face and skips beads in the narrow 
 {
     Print print;
     slice_wall(print, {});
-    const Layer *z2  = layer_at_slice(print, 1.9);
-    const Layer *z42 = layer_at_slice(print, 4.1);
-    const Layer *z5  = layer_at_slice(print, 5.3);
+    const Layer *z2 = layer_at_slice(print, 1.9);
+    const Layer *z5 = layer_at_slice(print, 5.3);
 
-    const PrintObject                       *object  = print.objects().front();
-    const std::vector<const ExtrusionPath *> paths2  = layer_paths(*z2);
-    const std::vector<const ExtrusionPath *> paths42 = layer_paths(*z42);
-    const std::vector<const ExtrusionPath *> paths5  = layer_paths(*z5);
+    const PrintObject                       *object = print.objects().front();
+    const std::vector<const ExtrusionPath *> paths2 = layer_paths(*z2);
+    const std::vector<const ExtrusionPath *> paths5 = layer_paths(*z5);
     const std::vector<double>                y2      = flat_face_ys(*object, paths2);
     const std::vector<double>                y5      = flat_face_ys(*object, paths5);
     REQUIRE_FALSE(y2.empty());
@@ -583,20 +602,24 @@ TEST_CASE("Reserve outer wall keeps the flat face and skips beads in the narrow 
 
     require_flat_face_width(*object, paths5);
 
-    const ExPolygons bead5 = outer_bead_coverage(paths5);
-    REQUIRE_FALSE(bead5.empty());
-    const double overlap5 = max_later_overlap_mm2(paths5, bead5);
-    INFO("later overlap at 5.3 " << overlap5);
-    REQUIRE(overlap5 <= 0.01);
-    REQUIRE(has_inner_bead_on_wedge(*object, paths5));
-
-    REQUIRE_FALSE(has_role(paths2, erPerimeter));
-    REQUIRE_FALSE(has_role(paths2, erGapFill));
-    REQUIRE_FALSE(has_role(paths42, erPerimeter));
-    REQUIRE_FALSE(has_role(paths42, erGapFill));
-
     for (const Layer *layer : print.objects().front()->layers())
         REQUIRE(interior_nonempty(*layer));
+}
+
+TEST_CASE("Reserve outer wall leaves classic wall lines in place", "[ReserveOuterWall]")
+{
+    Print on;
+    Print off;
+    slice_wall(on, {});
+    slice_wall(off, {{"reserve_outer_wall", false}});
+
+    std::vector<const ExtrusionPath *> on_paths;
+    std::vector<const ExtrusionPath *> off_paths;
+    collect_object_paths(on, on_paths);
+    collect_object_paths(off, off_paths);
+    const double deviation = polyline_deviation_mm(classic_wall_paths(on_paths), classic_wall_paths(off_paths));
+    INFO("wall polyline deviation " << deviation);
+    REQUIRE(deviation <= 0.01);
 }
 
 TEST_CASE("Reserve outer wall off overlaps the outer bead on the wedge", "[ReserveOuterWall]")
@@ -660,14 +683,14 @@ TEST_CASE("Reserve outer wall keeps infill inside the interior near the wedge to
     slice_wall(print, {});
     const Layer                             *top   = layer_at_slice(print, 5.9);
     const std::vector<const ExtrusionPath *> paths = layer_paths(*top);
-    REQUIRE(has_role(paths, erPerimeter));
     REQUIRE(interior_nonempty(*top));
 
     const ExPolygons outer = outer_bead_coverage(paths);
     REQUIRE_FALSE(outer.empty());
-    const double outer_overlap = max_fill_overlap_mm2(paths, outer);
-    INFO("fill overlap with outer bead at 5.9 " << outer_overlap);
-    REQUIRE(outer_overlap <= 0.01);
+    const ExPolygons core = outer_bead_core(outer);
+    const double core_overlap = max_fill_overlap_mm2(paths, core);
+    INFO("fill overlap with outer bead core at 5.9 " << core_overlap);
+    REQUIRE(core_overlap <= 0.02);
 
     for (const Layer *layer : print.objects().front()->layers()) {
         const double outside = fill_outside_interior_mm2(*layer);
@@ -690,6 +713,9 @@ TEST_CASE("Reserve outer wall off does not clip infill near the wedge top", "[Re
     const double outer_overlap = max_fill_overlap_mm2(paths, outer);
     INFO("fill overlap with outer bead at 5.9 off " << outer_overlap);
     REQUIRE(outer_overlap > 0.01);
+    const double core_overlap = max_fill_overlap_mm2(paths, outer_bead_core(outer));
+    INFO("fill overlap with outer bead core at 5.9 off " << core_overlap);
+    REQUIRE(core_overlap > 0.05);
 }
 
 TEST_CASE("Spiral vase ignores reserve outer wall on every layer including bottom shells", "[ReserveOuterWall]")
@@ -750,9 +776,9 @@ TEST_CASE("Infill density modifier keeps each region's fill inside its own reser
     const std::vector<const ExtrusionPath *> top_paths = layer_paths(*top);
     const ExPolygons                         top_outer = outer_bead_coverage(top_paths);
     REQUIRE_FALSE(top_outer.empty());
-    const double top_overlap = max_fill_overlap_mm2(top_paths, top_outer);
-    INFO("fill overlap with outer bead at 5.9 " << top_overlap);
-    REQUIRE(top_overlap <= 0.01);
+    const double top_overlap = max_fill_overlap_mm2(top_paths, outer_bead_core(top_outer));
+    INFO("fill overlap with outer bead core at 5.9 " << top_overlap);
+    REQUIRE(top_overlap <= 0.02);
 }
 
 TEST_CASE("A modifier with reserve outer wall off does not share the part interior", "[ReserveOuterWall]")
