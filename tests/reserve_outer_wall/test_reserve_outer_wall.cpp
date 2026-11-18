@@ -173,6 +173,18 @@ TriangleMesh wall_with_wedge()
     return wall;
 }
 
+// The 1.35 mm bar is wide enough for a center gap thicker than the 0.45 mm inner
+// wall, and that gap sits on the outer bead. The 2 mm bar fits a normal inner
+// wall plus a middle gap that stays clear of the outer bead.
+TriangleMesh thick_gap_beside_middle_gap()
+{
+    TriangleMesh thick = make_cube(12., 1.35, 10.);
+    TriangleMesh middle = make_cube(12., 2., 10.);
+    middle.translate(20.f, 0.f, 0.f);
+    MeshBoolean::cgal::plus(thick, middle);
+    return thick;
+}
+
 DynamicPrintConfig wall_config(std::initializer_list<ConfigBase::SetDeserializeItem> extra)
 {
     DynamicPrintConfig config = DynamicPrintConfig::full_print_config();
@@ -253,6 +265,17 @@ void slice_wall(Print &print, std::initializer_list<ConfigBase::SetDeserializeIt
     Model model;
     add_wall_object(model, WallModifier::None);
     slice_model(print, model, wall_config(extra), warning_out);
+}
+
+void slice_gap_bars(Print &print, std::initializer_list<ConfigBase::SetDeserializeItem> extra)
+{
+    Model model;
+    ModelObject *object = model.add_object();
+    object->name = "gap-bars";
+    object->add_volume(thick_gap_beside_middle_gap());
+    object->add_instance();
+    object->ensure_on_bed();
+    slice_model(print, model, wall_config(extra), nullptr);
 }
 
 // Layer::slice_z is the midplane the mesh is sliced on.
@@ -406,16 +429,6 @@ bool x_interval_overlaps(const PrintObject &object, const ExtrusionPath &path, d
         max_x = std::max(max_x, x);
     }
     return max_x >= lo && min_x <= hi;
-}
-
-bool has_inner_bead_on_wedge(const PrintObject &object, const std::vector<const ExtrusionPath *> &paths)
-{
-    for (const ExtrusionPath *path : paths) {
-        if (path->role() == erPerimeter && std::abs(path->width - 0.45) <= 0.001 &&
-            x_interval_overlaps(object, *path, 14.5, 15.5))
-            return true;
-    }
-    return false;
 }
 
 bool has_role(const std::vector<const ExtrusionPath *> &paths, ExtrusionRole role)
@@ -608,6 +621,43 @@ void require_flat_face_width(const PrintObject &object, const std::vector<const 
     REQUIRE(samples > 0);
 }
 
+std::vector<const ExtrusionPath *> paths_of_role_overlapping_x(const PrintObject &object,
+                                                               const std::vector<const ExtrusionPath *> &paths,
+                                                               ExtrusionRole role, double lo, double hi)
+{
+    std::vector<const ExtrusionPath *> out;
+    for (const ExtrusionPath *path : paths)
+        if (path->role() == role && x_interval_overlaps(object, *path, lo, hi))
+            out.push_back(path);
+    return out;
+}
+
+std::vector<const ExtrusionPath *> sorted_paths(std::vector<const ExtrusionPath *> paths)
+{
+    std::sort(paths.begin(), paths.end(), [](const ExtrusionPath *a, const ExtrusionPath *b) {
+        const NormLine left = normalize_polyline(a->polyline);
+        const NormLine right = normalize_polyline(b->polyline);
+        if (left < right)
+            return true;
+        if (right < left)
+            return false;
+        return a->width < b->width;
+    });
+    return paths;
+}
+
+void require_paths_unchanged(const std::vector<const ExtrusionPath *> &left, const std::vector<const ExtrusionPath *> &right)
+{
+    const double deviation = polyline_deviation_mm(left, right);
+    INFO("polyline deviation " << deviation);
+    REQUIRE(deviation <= 0.01);
+    const std::vector<const ExtrusionPath *> a = sorted_paths(left);
+    const std::vector<const ExtrusionPath *> b = sorted_paths(right);
+    REQUIRE(a.size() == b.size());
+    for (size_t i = 0; i < a.size(); ++i)
+        REQUIRE(double(a[i]->width) == Approx(double(b[i]->width)).margin(0.001));
+}
+
 } // namespace
 
 TEST_CASE("Reserve outer wall keeps the flat face and skips beads in the narrow channel", "[ReserveOuterWall]")
@@ -615,6 +665,7 @@ TEST_CASE("Reserve outer wall keeps the flat face and skips beads in the narrow 
     Print print;
     slice_wall(print, {});
     const Layer *z2 = layer_at_slice(print, 1.9);
+    const Layer *z4 = layer_at_slice(print, 4.1);
     const Layer *z5 = layer_at_slice(print, 5.3);
 
     const PrintObject                       *object = print.objects().front();
@@ -635,6 +686,16 @@ TEST_CASE("Reserve outer wall keeps the flat face and skips beads in the narrow 
 
     require_flat_face_width(*object, paths5);
 
+    for (const Layer *layer : {z2, z4}) {
+        const std::vector<const ExtrusionPath *> channel = layer_paths(*layer);
+        INFO("slice_z " << layer->slice_z);
+        REQUIRE_FALSE(has_role(channel, erPerimeter));
+        REQUIRE(has_role(channel, erGapFill));
+        for (const ExtrusionPath *path : channel)
+            if (path->role() == erGapFill)
+                REQUIRE(double(path->width) <= 0.45);
+    }
+
     for (const Layer *layer : print.objects().front()->layers())
         REQUIRE(interior_nonempty(*layer));
 }
@@ -653,6 +714,12 @@ TEST_CASE("Reserve outer wall leaves classic wall lines in place", "[ReserveOute
     const double deviation = polyline_deviation_mm(classic_wall_paths(on_paths), classic_wall_paths(off_paths));
     INFO("wall polyline deviation " << deviation);
     REQUIRE(deviation <= 0.01);
+
+    for (const Layer *layer : off.objects().front()->layers()) {
+        for (const ExtrusionPath *path : layer_paths(*layer))
+            if (path->role() == erGapFill)
+                REQUIRE(double(path->width) <= 0.45);
+    }
 }
 
 TEST_CASE("Reserve outer wall off overlaps the outer bead on the wedge", "[ReserveOuterWall]")
@@ -981,3 +1048,76 @@ TEST_CASE("Reserve outer wall off leaves the stored bead empty and does not cut 
     INFO("follower solid fill on outer bead with reserve off " << solid_on_bead);
     REQUIRE(solid_on_bead > 0.01);
 }
+
+TEST_CASE("Reserve outer wall narrows a thick gap line and keeps the middle gap", "[ReserveOuterWall]")
+{
+    Print on;
+    Print off;
+    slice_gap_bars(on, {});
+    slice_gap_bars(off, {{"reserve_outer_wall", false}});
+    const Layer *on_layer = layer_at_slice(on, 1.9);
+    const Layer *off_layer = layer_at_slice(off, 1.9);
+    const PrintObject *on_object = on.objects().front();
+    const PrintObject *off_object = off.objects().front();
+    const std::vector<const ExtrusionPath *> on_paths = layer_paths(*on_layer);
+    const std::vector<const ExtrusionPath *> off_paths = layer_paths(*off_layer);
+
+    const std::vector<const ExtrusionPath *> outer_on = [&] {
+        std::vector<const ExtrusionPath *> out;
+        for (const ExtrusionPath *path : on_paths)
+            if (is_outer_bead_role(path->role()))
+                out.push_back(path);
+        return out;
+    }();
+    const std::vector<const ExtrusionPath *> outer_off = [&] {
+        std::vector<const ExtrusionPath *> out;
+        for (const ExtrusionPath *path : off_paths)
+            if (is_outer_bead_role(path->role()))
+                out.push_back(path);
+        return out;
+    }();
+    REQUIRE_FALSE(outer_on.empty());
+    require_paths_unchanged(outer_on, outer_off);
+    for (const ExtrusionPath *path : outer_on)
+        REQUIRE(double(path->width) == Approx(0.42).margin(0.001));
+
+    const std::vector<const ExtrusionPath *> inner_on =
+        paths_of_role_overlapping_x(*on_object, on_paths, erPerimeter, 18., 40.);
+    const std::vector<const ExtrusionPath *> inner_off =
+        paths_of_role_overlapping_x(*off_object, off_paths, erPerimeter, 18., 40.);
+    REQUIRE_FALSE(inner_on.empty());
+    require_paths_unchanged(inner_on, inner_off);
+    for (const ExtrusionPath *path : inner_on)
+        REQUIRE(double(path->width) == Approx(0.45).margin(0.001));
+
+    const ExPolygons off_bead = outer_bead_coverage(off_paths);
+    const std::vector<const ExtrusionPath *> middle_on =
+        paths_of_role_overlapping_x(*on_object, on_paths, erGapFill, 18., 40.);
+    const std::vector<const ExtrusionPath *> middle_off =
+        paths_of_role_overlapping_x(*off_object, off_paths, erGapFill, 18., 40.);
+    REQUIRE_FALSE(middle_off.empty());
+    for (const ExtrusionPath *path : middle_off)
+        REQUIRE(overlap_area_mm2(*path, off_bead) <= 0.001);
+    require_paths_unchanged(middle_on, middle_off);
+
+    const ExPolygons on_core = outer_bead_core(outer_bead_coverage(on_paths));
+    const std::vector<const ExtrusionPath *> thick_on =
+        paths_of_role_overlapping_x(*on_object, on_paths, erGapFill, 0., 16.);
+    const std::vector<const ExtrusionPath *> thick_off =
+        paths_of_role_overlapping_x(*off_object, off_paths, erGapFill, 0., 16.);
+    REQUIRE_FALSE(thick_off.empty());
+    REQUIRE_FALSE(thick_on.empty());
+    for (const ExtrusionPath *path : thick_off) {
+        INFO("classic thick gap width " << path->width);
+        REQUIRE(double(path->width) > 0.45);
+        REQUIRE(overlap_area_mm2(*path, off_bead) > 0.01);
+    }
+    for (const ExtrusionPath *path : thick_on) {
+        INFO("retracted gap width " << path->width);
+        REQUIRE(double(path->width) == Approx(0.45).margin(0.001));
+        const double core_overlap = overlap_area_mm2(*path, on_core);
+        INFO("thick gap overlap with outer bead core " << core_overlap);
+        REQUIRE(core_overlap <= 0.02);
+    }
+}
+
