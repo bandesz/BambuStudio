@@ -81,6 +81,7 @@ Flat-face centerline: among `erExternalPerimeter` paths, the points with X in [0
 |------|------|
 | Flow 1 | `slice_z` 5.3 and 1.9 flat-face Y within 0.01 mm of each other and of 0.21. Outer width 0.42 ± 0.001. On the wedge, wall lines match the checkbox off within 0.01 mm. `slice_z` 1.9 and 4.1 have no `erPerimeter` and do have a thin `erGapFill` |
 | Flow 2 | The 2 mm bar's middle gap does not touch the outer bead and matches the checkbox off within 0.01 mm, as does its normal inner wall. The 1.35 mm bar's gap is wider than 0.45 mm, intersects the outer bead, and is narrowed to 0.45 mm with outer-bead-core overlap ≤ 0.02 mm². The outer bead stays as Classic drew it |
+| Hole bead | A 24 x 16 x 2 frame. The cavity's bottom wall is 1 mm, thickened to 1.35 mm for x in [6, 18] and z in [0.4, 1.4]. On `slice_z` 0.5, 0.7, 0.9, 1.1, and 1.3 the hole's external perimeter matches the checkbox off within 0.01 mm and 0.001 mm. The gap wider than 0.45 mm on that bead is narrowed to 0.45 mm with hole-bead-core overlap ≤ 0.02 mm². Checkbox off overlaps that hole bead by more than 0.02 mm² |
 | Flow 3 | `reserve_outer_wall` 0. On `slice_z` 5.3 some later line has overlap area with the full outer bead > 0.02 mm². Fill overlap with the outer-bead core at `slice_z` 5.9 is > 0.05 mm² |
 | Flow 4 | Warning string and `opt_key`. Polylines match the checkbox off within 0.01 mm |
 | Infill clip | `slice_z` 5.9, checkbox on. Any fill-role extrusion has overlap area with the outer-bead core ≤ 0.02 mm². Sparse infill may use the overlap band |
@@ -91,6 +92,7 @@ Flow 4 cases: `wall_sequence` = `inner wall/outer wall` with Classic, and `wall_
 
 - [x] Flow 1 — flat face unchanged; `slice_z` 1.9 and 4.1 have no inner perimeter and a thin gap fill; the wedge has no thick gap line (`Reserve outer wall keeps the flat face and skips beads in the narrow channel`, `Reserve outer wall leaves classic wall lines in place`)
 - [x] Flow 2 — middle gap that does not touch the outer bead, normal inner wall, and thick gap retract (`Reserve outer wall narrows a thick gap line and keeps the middle gap`)
+- [x] Hole bead — inner-facing external perimeter unchanged, thick gap on that bead narrowed (`Reserve outer wall keeps a hole bead and narrows the thick line on it`)
 - [x] Flow 3 — checkbox off overlaps the outer bead on `slice_z` 5.3 (`Reserve outer wall off overlaps the outer bead on the wedge`)
 - [x] Flow 4 — warning strings, a pre-existing warning, spiral vase with no warning and no toolpath change including bottom shells, Classic inner/outer and Arachne polyline match
 - [x] Merged regions — density modifier copies the interior; a modifier with the checkbox off does not share it; empty slices clear it; a re-slice with the checkbox off leaves every interior empty

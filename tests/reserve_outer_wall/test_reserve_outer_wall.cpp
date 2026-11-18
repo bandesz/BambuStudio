@@ -646,6 +646,86 @@ std::vector<const ExtrusionPath *> sorted_paths(std::vector<const ExtrusionPath 
     return paths;
 }
 
+// Frame with a cavity. The inner face of the bottom wall is locally thickened
+// from 1.0 mm to 1.35 mm over z in [0.4, 1.4], the width that leaves a center
+// gap thicker than the inner wall on the solid 1.35 mm bar.
+TriangleMesh cavity_with_local_hole_thickening()
+{
+    TriangleMesh left   = make_cube(4., 16., 2.);
+    TriangleMesh right  = make_cube(4., 16., 2.);
+    right.translate(20.f, 0.f, 0.f);
+    TriangleMesh top = make_cube(16.2, 4., 2.);
+    top.translate(3.9f, 12.f, 0.f);
+    TriangleMesh bottom = make_cube(16.2, 1., 2.);
+    bottom.translate(3.9f, 0.f, 0.f);
+    TriangleMesh pad = make_cube(12., 0.4, 1.);
+    pad.translate(6.f, 0.95f, 0.4f);
+    MeshBoolean::cgal::plus(left, right);
+    MeshBoolean::cgal::plus(left, top);
+    MeshBoolean::cgal::plus(left, bottom);
+    MeshBoolean::cgal::plus(left, pad);
+    return left;
+}
+
+bool touches_outer_box(const PrintObject &object, const ExtrusionPath &path, double width, double height, double margin)
+{
+    for (const Point &point : path.polyline.points) {
+        const Vec2d xy = mesh_xy(object, point);
+        if (xy.x() <= margin || xy.y() <= margin || xy.x() >= width - margin || xy.y() >= height - margin)
+            return true;
+    }
+    return false;
+}
+
+// Depth-0 hole loop: the external perimeter that bounds the cavity, not the outer silhouette.
+std::vector<const ExtrusionPath *> hole_bead_paths(const PrintObject &object, const std::vector<const ExtrusionPath *> &paths)
+{
+    std::vector<const ExtrusionPath *> out;
+    for (const ExtrusionPath *path : paths) {
+        if (!is_outer_bead_role(path->role()))
+            continue;
+        if (!touches_outer_box(object, *path, 24., 16., 0.5))
+            out.push_back(path);
+    }
+    return out;
+}
+
+bool on_thickened_hole_face(const PrintObject &object, const ExtrusionPath &path)
+{
+    for (const Point &point : path.polyline.points) {
+        const Vec2d xy = mesh_xy(object, point);
+        if (xy.y() >= 1.05 && xy.y() <= 1.25)
+            return true;
+    }
+    return false;
+}
+
+std::vector<const ExtrusionPath *> gap_on_thickened_span(const PrintObject &object,
+                                                         const std::vector<const ExtrusionPath *> &paths,
+                                                         const ExPolygons &hole_bead)
+{
+    std::vector<const ExtrusionPath *> out;
+    for (const ExtrusionPath *path : paths) {
+        if (path->role() != erGapFill || !x_interval_overlaps(object, *path, 8., 16.))
+            continue;
+        if (overlap_area_mm2(*path, hole_bead) <= 0.001)
+            continue;
+        out.push_back(path);
+    }
+    return out;
+}
+
+void slice_mesh(Print &print, const TriangleMesh &mesh, std::initializer_list<ConfigBase::SetDeserializeItem> extra)
+{
+    Model model;
+    ModelObject *object = model.add_object();
+    object->name = "cavity";
+    object->add_volume(mesh);
+    object->add_instance();
+    object->ensure_on_bed();
+    slice_model(print, model, wall_config(extra), nullptr);
+}
+
 void require_paths_unchanged(const std::vector<const ExtrusionPath *> &left, const std::vector<const ExtrusionPath *> &right)
 {
     const double deviation = polyline_deviation_mm(left, right);
@@ -1118,6 +1198,56 @@ TEST_CASE("Reserve outer wall narrows a thick gap line and keeps the middle gap"
         const double core_overlap = overlap_area_mm2(*path, on_core);
         INFO("thick gap overlap with outer bead core " << core_overlap);
         REQUIRE(core_overlap <= 0.02);
+    }
+}
+
+TEST_CASE("Reserve outer wall keeps a hole bead and narrows the thick line on it", "[ReserveOuterWall]")
+{
+    const TriangleMesh mesh = cavity_with_local_hole_thickening();
+    Print on;
+    Print off;
+    slice_mesh(on, mesh, {});
+    slice_mesh(off, mesh, {{"reserve_outer_wall", false}});
+
+    for (double slice_z : {0.5, 0.7, 0.9, 1.1, 1.3}) {
+        INFO("slice_z " << slice_z);
+        const Layer *on_layer = layer_at_slice(on, slice_z);
+        const Layer *off_layer = layer_at_slice(off, slice_z);
+        const PrintObject *on_object = on.objects().front();
+        const PrintObject *off_object = off.objects().front();
+        const std::vector<const ExtrusionPath *> on_paths = layer_paths(*on_layer);
+        const std::vector<const ExtrusionPath *> off_paths = layer_paths(*off_layer);
+
+        const std::vector<const ExtrusionPath *> hole_on = hole_bead_paths(*on_object, on_paths);
+        const std::vector<const ExtrusionPath *> hole_off = hole_bead_paths(*off_object, off_paths);
+        REQUIRE_FALSE(hole_on.empty());
+        REQUIRE(std::any_of(hole_on.begin(), hole_on.end(), [&](const ExtrusionPath *path) {
+            return on_thickened_hole_face(*on_object, *path);
+        }));
+        require_paths_unchanged(hole_on, hole_off);
+        for (const ExtrusionPath *path : hole_on)
+            REQUIRE(double(path->width) == Approx(0.42).margin(0.001));
+
+        const ExPolygons off_bead = outer_bead_coverage(hole_off);
+        const ExPolygons on_core = outer_bead_core(outer_bead_coverage(hole_on));
+        const std::vector<const ExtrusionPath *> thick_off = gap_on_thickened_span(*off_object, off_paths, off_bead);
+        const std::vector<const ExtrusionPath *> thick_on = gap_on_thickened_span(*on_object, on_paths, outer_bead_coverage(hole_on));
+        REQUIRE_FALSE(thick_off.empty());
+        REQUIRE_FALSE(thick_on.empty());
+        for (const ExtrusionPath *path : thick_off) {
+            INFO("classic hole gap width " << path->width);
+            REQUIRE(double(path->width) > 0.45);
+            const double bead_overlap = overlap_area_mm2(*path, off_bead);
+            INFO("classic hole gap overlap " << bead_overlap);
+            REQUIRE(bead_overlap > 0.02);
+        }
+        for (const ExtrusionPath *path : thick_on) {
+            INFO("retracted hole gap width " << path->width);
+            REQUIRE(double(path->width) == Approx(0.45).margin(0.001));
+            const double core_overlap = overlap_area_mm2(*path, on_core);
+            INFO("hole gap overlap with hole bead core " << core_overlap);
+            REQUIRE(core_overlap <= 0.02);
+        }
     }
 }
 
