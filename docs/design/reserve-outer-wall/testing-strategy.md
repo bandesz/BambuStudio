@@ -25,7 +25,7 @@ The flat face is Y = 0.
 
 `layer_height` and `initial_layer_print_height` are 0.2. `Layer::slice_z` is the midplane (`Slicing.cpp` sets it to halfway between the layer's bottom and `print_z`). Tests select layers by `slice_z`, not by `print_z`.
 
-The wedge is a sharp triangle. Classic decides which inner and gap lines fit. On this mesh every `erGapFill` is thinner than the 0.45 mm inner wall, so reserve outer wall leaves those lines where Classic drew them. A second mesh, a 1.35 mm bar beside a 2 mm bar, prints the thick gap. A gap line wider than the inner wall that intersects the outer bead is narrowed to that inner width and pulled off the outer-bead core, the bead inset by `layer_height * (1 - π/4)`. A normal inner wall, and a gap line that does not touch the outer bead, stay where Classic drew them. Sparse infill may use the overlap band outside that core.
+The wedge is a sharp triangle. Classic decides which inner and gap lines fit. On this mesh every `erGapFill` is thinner than the 0.45 mm inner wall, so reserve outer wall leaves those lines where Classic drew them. A second mesh, a 1.35 mm bar beside a 2 mm bar, prints the thick gap. A gap line wider than the inner wall that intersects the outer bead is narrowed to that inner width in place, so its centerline stays and the coverage pulls back from both faces. A normal inner wall, and a gap line that does not touch the outer bead, stay where Classic drew them. Sparse infill may use the overlap band outside that core.
 
 | `slice_z` | `print_z` | What is true there |
 |-----------|-----------|--------------------|
@@ -69,7 +69,7 @@ Outer-bead core: that coverage, inset by `layer_height * (1 - π/4)`.
 
 Wall lines are `erExternalPerimeter`, `erOverhangPerimeter`, `erPerimeter`, and `erGapFill`. On the 1 mm wedge they match the checkbox off within 0.01 mm. That mesh does not print a gap line wider than the inner wall.
 
-A normal inner wall, and a gap line that does not touch the outer bead, match the checkbox off within 0.01 mm. That includes the middle gap of the 2 mm bar. A gap line wider than the inner wall that intersects the outer bead, the center gap of the 1.35 mm bar, is narrowed to the inner wall width. Its overlap with the outer-bead core is ≤ 0.02 mm². The outer bead centerline and width stay as Classic drew them.
+A normal inner wall, and a gap line that does not touch the outer bead, match the checkbox off within 0.01 mm. That includes the middle gap of the 2 mm bar. A gap line wider than the inner wall that intersects the outer bead, the center gap of the 1.35 mm bar, is narrowed to the inner wall width and its centerline stays within 0.01 mm of the checkbox off. Its overlap with the outer-bead core is ≤ 0.02 mm². The outer bead centerline and width stay as Classic drew them.
 
 Outer-bead core overlap is the area of the intersection of a line's own round-join coverage with the outer-bead core. Sparse infill may use the overlap band. It is measured against that core at ≤ 0.02 mm².
 

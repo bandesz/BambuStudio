@@ -726,6 +726,38 @@ void slice_mesh(Print &print, const TriangleMesh &mesh, std::initializer_list<Co
     slice_model(print, model, wall_config(extra), nullptr);
 }
 
+// 1.2 mm wall with a rib on +Y that stays 2.05 mm thick through z = 4.5, then
+// chamfers back to 1.2 mm by z = 5.5. The y = 0 face is the stable external wall.
+TriangleMesh wall_with_chamfered_rib()
+{
+    TriangleMesh wall = make_cube(40., 1.2, 8.);
+    TriangleMesh rib = make_cube(12., 0.85, 4.55);
+    rib.translate(14.f, 1.2f, 0.f);
+    // Triangular prism. Overlaps the rib slightly so the union is a single volume.
+    const TriangleMesh chamfer(
+        std::vector<Vec3f>{
+            Vec3f(14.f, 1.2f, 4.45f),
+            Vec3f(14.f, 2.05f, 4.45f),
+            Vec3f(14.f, 1.2f, 5.5f),
+            Vec3f(26.f, 1.2f, 4.45f),
+            Vec3f(26.f, 2.05f, 4.45f),
+            Vec3f(26.f, 1.2f, 5.5f),
+        },
+        std::vector<Vec3i>{
+            Vec3i(0, 2, 1),
+            Vec3i(3, 4, 5),
+            Vec3i(0, 1, 4),
+            Vec3i(0, 4, 3),
+            Vec3i(1, 2, 5),
+            Vec3i(1, 5, 4),
+            Vec3i(0, 3, 5),
+            Vec3i(0, 5, 2),
+        });
+    MeshBoolean::cgal::plus(wall, rib);
+    MeshBoolean::cgal::plus(wall, chamfer);
+    return wall;
+}
+
 void require_paths_unchanged(const std::vector<const ExtrusionPath *> &left, const std::vector<const ExtrusionPath *> &right)
 {
     const double deviation = polyline_deviation_mm(left, right);
@@ -1199,6 +1231,24 @@ TEST_CASE("Reserve outer wall narrows a thick gap line and keeps the middle gap"
         INFO("thick gap overlap with outer bead core " << core_overlap);
         REQUIRE(core_overlap <= 0.02);
     }
+    auto mean_y = [](const PrintObject &object, const std::vector<const ExtrusionPath *> &paths) {
+        double sum = 0.;
+        size_t count = 0;
+        for (const ExtrusionPath *path : paths) {
+            for (const Point &point : path->polyline.points) {
+                sum += mesh_xy(object, point).y();
+                ++count;
+            }
+        }
+        REQUIRE(count > 0);
+        return sum / double(count);
+    };
+    const double on_y = mean_y(*on_object, thick_on);
+    const double off_y = mean_y(*off_object, thick_off);
+    INFO("thick gap Y on " << on_y << " off " << off_y);
+    // Narrowing must pull both faces back. Sliding the line toward one bead
+    // makes that face bulge, which is the opposite-side protrusion.
+    REQUIRE(std::abs(on_y - off_y) <= 0.01);
 }
 
 TEST_CASE("Reserve outer wall keeps a hole bead and narrows the thick line on it", "[ReserveOuterWall]")
@@ -1251,3 +1301,62 @@ TEST_CASE("Reserve outer wall keeps a hole bead and narrows the thick line on it
     }
 }
 
+TEST_CASE("Reserve outer wall keeps the stable inner wall where a rib chamfers", "[ReserveOuterWall]")
+{
+    Print print;
+    slice_mesh(print, wall_with_chamfered_rib(), {});
+    const PrintObject *object = print.objects().front();
+
+    auto face_ys = [&](double slice_z, ExtrusionRole role, double x0, double x1, double y_max) {
+        std::vector<double> ys;
+        for (const ExtrusionPath *path : layer_paths(*layer_at_slice(print, slice_z))) {
+            if (path->role() != role || path->polyline.points.size() < 2)
+                continue;
+            const auto &points = path->polyline.points;
+            for (size_t i = 0; i + 1 < points.size(); ++i) {
+                const Vec2d a = mesh_xy(*object, points[i]);
+                const Vec2d b = mesh_xy(*object, points[i + 1]);
+                const double xa = std::min(a.x(), b.x());
+                const double xb = std::max(a.x(), b.x());
+                if (xb < x0 || xa > x1 || std::abs(a.y() - b.y()) > 0.05)
+                    continue;
+                if (a.y() <= y_max)
+                    ys.push_back(0.5 * (a.y() + b.y()));
+            }
+        }
+        return ys;
+    };
+
+    // The y = 0 face does not move. Both wall lines on that face stay on the
+    // thick-rib inset through the chamfer, instead of collapsing into gap fill.
+    for (double slice_z : {4.3, 5.3}) {
+        const std::vector<double> outer = face_ys(slice_z, erExternalPerimeter, 16., 24., 0.5);
+        REQUIRE_FALSE(outer.empty());
+        for (double y : outer)
+            REQUIRE(y == Approx(0.21).margin(0.01));
+
+        const std::vector<double> inner = face_ys(slice_z, erPerimeter, 16., 24., 0.9);
+        REQUIRE_FALSE(inner.empty());
+        for (double y : inner)
+            REQUIRE(y == Approx(0.602).margin(0.02));
+    }
+
+    // The plain 1.2 mm wall beside the rib stays a single bead plus its center gap.
+    REQUIRE(face_ys(5.3, erPerimeter, 2., 10., 2.).empty());
+
+    const Layer *chamfer = layer_at_slice(print, 5.3);
+    for (const ExtrusionPath *path : layer_paths(*chamfer)) {
+        if (path->role() != erGapFill || path->polyline.points.size() < 2)
+            continue;
+        const auto &points = path->polyline.points;
+        for (size_t i = 0; i + 1 < points.size(); ++i) {
+            const Vec2d a = mesh_xy(*object, points[i]);
+            const Vec2d b = mesh_xy(*object, points[i + 1]);
+            const double xa = std::min(a.x(), b.x());
+            const double xb = std::max(a.x(), b.x());
+            if (xb < 16. || xa > 24. || std::abs(a.y() - b.y()) > 0.05)
+                continue;
+            REQUIRE(0.5 * (a.y() + b.y()) > 0.85);
+        }
+    }
+}

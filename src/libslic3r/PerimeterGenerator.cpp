@@ -859,9 +859,9 @@ static Polygons to_polygons_with_flag(const ExPolygon& src, const bool contour_f
     return polygons;
 }
 
-// A gap line wider than a normal inner wall, and sitting on the outer bead, is pulled
-// back to that inner width. Lines that do not touch the outer bead stay, including the
-// middle line of a three-line wall.
+// A gap line wider than a normal inner wall, and sitting on the outer bead, is narrowed
+// to that inner width in place. The centerline stays. Sliding the surplus toward the
+// nearer bead would push the line into the bead on the opposite face.
 static void retract_thick_gap_fill_from_outer_bead(ThickPolylines &polylines, const ExPolygons &outer_bead,
                                                     double inner_width_mm, double height_mm)
 {
@@ -873,36 +873,9 @@ static void retract_thick_gap_fill_from_outer_bead(ThickPolylines &polylines, co
         return;
     const double capped_spacing = scale_(capped_spacing_mm);
 
-    auto nearest_on_bead = [&](const Point &point, bool &inside) {
-        inside = false;
-        double best = std::numeric_limits<double>::max();
-        Point nearest = point;
-        for (const ExPolygon &ex : outer_bead) {
-            if (ex.contains(point))
-                inside = true;
-            auto consider = [&](const Polygon &poly) {
-                for (const Line &line : poly.lines()) {
-                    Point close;
-                    const double distance = line.distance_to_squared(point, &close);
-                    if (distance < best) {
-                        best = distance;
-                        nearest = close;
-                    }
-                }
-            };
-            consider(ex.contour);
-            for (const Polygon &hole : ex.holes)
-                consider(hole);
-        }
-        return nearest;
-    };
-
     for (ThickPolyline &pl : polylines) {
         if (pl.points.size() < 2 || pl.width.size() < (pl.points.size() - 1) * 2)
             continue;
-        const bool closed = pl.points.front() == pl.points.back();
-        std::vector<Vec2d> shift(pl.points.size(), Vec2d::Zero());
-        std::vector<int> hits(pl.points.size(), 0);
         for (size_t i = 0; i + 1 < pl.points.size(); ++i) {
             double &w0 = pl.width[2 * i];
             double &w1 = pl.width[2 * i + 1];
@@ -920,40 +893,79 @@ static void retract_thick_gap_fill_from_outer_bead(ThickPolylines &polylines, co
             const Polygons covered = offset(segment, float(scale_(emitted / 2.)), jtRound, scale_(0.01), ClipperLib::etOpenButt);
             if (intersection_ex(covered, outer_bead).empty())
                 continue;
-            const Vec2d mid = (a.cast<double>() + b.cast<double>()) * 0.5;
-            bool inside = false;
-            const Point nearest = nearest_on_bead(Point(coord_t(std::lround(mid.x())), coord_t(std::lround(mid.y()))), inside);
-            const Vec2d nearest_d = nearest.cast<double>();
-            Vec2d away = mid - nearest_d;
-            if (inside)
-                away = nearest_d - mid;
-            const double length = away.norm();
-            if (length < 1.)
-                continue;
-            away *= scale_((emitted - inner_width_mm) / 2.) / length;
-            shift[i] += away;
-            shift[i + 1] += away;
-            ++hits[i];
-            ++hits[i + 1];
             w0 = capped_spacing;
             w1 = capped_spacing;
         }
-        if (closed && pl.points.size() >= 2) {
-            const Vec2d end = shift.front() + shift.back();
-            const int end_hits = hits.front() + hits.back();
-            shift.front() = end;
-            shift.back() = end;
-            hits.front() = end_hits;
-            hits.back() = end_hits;
-        }
-        for (size_t i = 0; i < pl.points.size(); ++i) {
-            if (hits[i] == 0)
-                continue;
-            const Vec2d delta = shift[i] / double(hits[i]);
-            pl.points[i].x() += coord_t(std::lround(delta.x()));
-            pl.points[i].y() += coord_t(std::lround(delta.y()));
-        }
     }
+}
+
+// Classic drops the second wall once the opposite face gets close, and fills that
+// band with a thicker gap line. Where the face itself did not move, put that
+// second wall back on the same inset as the layer below and keep the gap out of it.
+static Polylines stable_inner_walls(const ExPolygons &island, const ExPolygons *lower_slices,
+                                    const std::vector<PerimeterGeneratorLoops> &contours,
+                                    const std::vector<PerimeterGeneratorLoops> &holes,
+                                    coord_t ext_perimeter_width, coord_t ext_perimeter_spacing2)
+{
+    Polylines empty;
+    if (lower_slices == nullptr || lower_slices->empty() || island.empty() || ext_perimeter_spacing2 <= 0)
+        return empty;
+
+    const float half_ext = float(ext_perimeter_width) / 2.f;
+    const float inner_delta = float(ext_perimeter_spacing2);
+    const ExPolygons fitted_now = offset_ex(offset_ex(island, -half_ext), -inner_delta);
+    if (fitted_now.empty())
+        return empty;
+
+    const ExPolygons lower_near = intersection_ex(*lower_slices, offset_ex(island, float(scale_(2.))));
+    const ExPolygons removed = diff_ex(lower_near, island);
+    if (removed.empty())
+        return empty;
+
+    const ExPolygons fitted_lower = offset_ex(offset_ex(lower_near, -half_ext), -inner_delta);
+    if (fitted_lower.empty())
+        return empty;
+
+    const float tube = float(scale_(0.08));
+    const ExPolygons lower_tube = diff_ex(offset_ex(fitted_lower, tube), offset_ex(fitted_lower, -tube));
+    const ExPolygons influence = offset_ex(removed, float(scale_(1.5)));
+    Polylines stable = intersection_pl(to_polylines(fitted_now), intersection_ex(lower_tube, influence));
+
+    Polygons classic_inner;
+    if (contours.size() > 1) {
+        for (const PerimeterGeneratorLoop &loop : contours[1])
+            classic_inner.push_back(loop.polygon);
+    }
+    if (holes.size() > 1) {
+        for (const PerimeterGeneratorLoop &loop : holes[1])
+            classic_inner.push_back(loop.polygon);
+    }
+    if (!classic_inner.empty())
+        stable = diff_pl(stable, offset(classic_inner, float(scale_(0.05))));
+
+    Polylines kept;
+    for (Polyline &pl : stable) {
+        if (pl.length() >= scale_(0.4))
+            kept.push_back(std::move(pl));
+    }
+    return kept;
+}
+
+static ExPolygons beads_of(const Polylines &lines, float half_width)
+{
+    Polygons covered;
+    for (const Polyline &pl : lines) {
+        if (pl.points.size() < 2)
+            continue;
+        Polyline open = pl;
+        auto end_type = ClipperLib::etOpenButt;
+        if (open.points.front() == open.points.back() && open.points.size() >= 4) {
+            open.points.pop_back();
+            end_type = ClipperLib::etClosedLine;
+        }
+        append(covered, offset(open, half_width, jtRound, float(scale_(0.01)), end_type));
+    }
+    return union_ex(covered);
 }
 
 void PerimeterGenerator::process_classic()
@@ -1075,6 +1087,7 @@ void PerimeterGenerator::process_classic()
             std::vector<PerimeterGeneratorLoops> contours(loop_number+1);    // depth => loops
             std::vector<PerimeterGeneratorLoops> holes(loop_number+1);       // depth => loops
             ThickPolylines thin_walls;
+            Polylines restored_inner;
             // we loop one time more than needed in order to find gaps after the last perimeter was applied
             for (int i = 0;; ++ i) {  // outer loop is 0
                 // Calculate next onion shell of perimeters.
@@ -1328,6 +1341,19 @@ void PerimeterGenerator::process_classic()
                 const float allowed = float(scale_(this->layer_height * (1. - 0.25 * PI)));
                 const ExPolygons forbidden = offset_ex(outer_bead_ex, -allowed);
                 reserved_interior = forbidden.empty() ? island_slice : diff_ex(island_slice, forbidden);
+                // The opposite face of a chamfer can collapse the second wall into a thick
+                // gap. Where that face moved and this face did not, draw the same inner
+                // wall the layer below had, and do not let the gap or infill take its place.
+                restored_inner = stable_inner_walls(island_slice, this->lower_slices, contours, holes,
+                                                    ext_perimeter_width, ext_perimeter_spacing2);
+                if (!restored_inner.empty()) {
+                    const ExPolygons inner_beads = intersection_ex(
+                        beads_of(restored_inner, float(perimeter_width) / 2.f), island_slice);
+                    if (!inner_beads.empty()) {
+                        reserved_interior = diff_ex(reserved_interior, inner_beads);
+                        last = diff_ex(last, inner_beads);
+                    }
+                }
                 if (!gaps.empty())
                     gaps = intersection_ex(gaps, reserved_interior);
             }
@@ -1460,6 +1486,13 @@ void PerimeterGenerator::process_classic()
                 entities.loop_node_range.second = this->loop_nodes->size();
             }
 
+
+            if (!restored_inner.empty()) {
+                ExtrusionPaths restored_paths;
+                extrusion_paths_append(restored_paths, restored_inner, erPerimeter,
+                    this->perimeter_flow.mm3_per_mm(), float(this->perimeter_flow.width()), float(this->layer_height));
+                entities.append(std::move(restored_paths));
+            }
 
             // append perimeters for this slice as a collection
             if (! entities.empty())

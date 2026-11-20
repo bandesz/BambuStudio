@@ -43,7 +43,7 @@ cmake -S . -B build -DSLIC3R_BUILD_TESTS=ON && cmake --build build --target rese
   - Checkbox on, `slice_z` 1.9 and 4.1: no `erPerimeter`. A thin `erGapFill` is present and is not wider than the 0.45 mm inner wall.
   - Checkbox off, `slice_z` 5.3: some later line has overlap area with the full outer bead > 0.02 mm².
   - The 1 mm wedge does not print a gap line wider than the inner wall, so its classic wall lines match the checkbox off within 0.01 mm.
-  - A 1.35 mm bar: the center gap is wider than 0.45 mm and intersects the outer bead. With the checkbox on it is narrowed to 0.45 mm and its overlap with the outer-bead core is ≤ 0.02 mm².
+  - A 1.35 mm bar: the center gap is wider than 0.45 mm and intersects the outer bead. With the checkbox on it is narrowed to 0.45 mm, its centerline stays within 0.01 mm of the checkbox off, and its overlap with the outer-bead core is ≤ 0.02 mm².
   - A 2 mm bar: the normal inner wall, and the middle gap line that does not touch the outer bead, match the checkbox off within 0.01 mm.
   - Classic + inner/outer, and Arachne + outer/inner, checkbox on: extrusion polylines match checkbox off within 0.01 mm.
   - `reserved_outer_wall_interior` is non-empty on those Classic outer/inner layers and empty when the flag does not apply.

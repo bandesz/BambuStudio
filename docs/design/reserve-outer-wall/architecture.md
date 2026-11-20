@@ -25,9 +25,11 @@ The normal overlap band between the outer bead and the next line stays inside `i
 
 ## Later walls and gap fill
 
-Inner loops (`erPerimeter`) are the Classic insets. They are not rebuilt and they are not deleted when they use the designed overlap.
+Inner loops (`erPerimeter`) are the Classic insets. They are not rebuilt where Classic kept them, and they are not deleted when they use the designed overlap.
 
-Gap regions are intersected with `interior` before the existing medial-axis gap fill. A gap line that does not touch the outer bead is left as Classic drew it, including the middle line of a three-line wall. A gap line wider than the inner wall that does touch the outer bead is narrowed to the inner wall width and shifted off that bead. Classic still drops a gap below the minimum bead width.
+Where a chamfer on the opposite face makes Classic drop the second wall and fill that band with a thicker gap line, the missing inner wall is drawn again. It is the same inset the layer below used, and only on the face that did not move. The restored bead is taken out of the gap region and out of the infill interior. A constant thin wall, where the layer below made the same choice, is left as Classic drew it.
+
+Gap regions are intersected with `interior` before the existing medial-axis gap fill. A gap line that does not touch the outer bead is left as Classic drew it, including the middle line of a three-line wall. A gap line wider than the inner wall that does touch the outer bead is narrowed to the inner wall width where it sits. The centerline is not moved, so the surplus is not pushed into the bead on the opposite face. Classic still drops a gap below the minimum bead width.
 
 Solid infill surfaces are then cut back to the inner face of the outer bead. Sparse infill keeps the normal overlap band.
 
