@@ -96,7 +96,7 @@ add_sentinel() {
 
 run_build() {
     set +e
-    bash "$SCRIPT" >"$WORK/stdout.txt" 2>"$ERR"
+    bash "$SCRIPT" "$@" >"$WORK/stdout.txt" 2>"$ERR"
     STATUS=$?
     set -e
 }
@@ -107,7 +107,8 @@ err_text() { cat "$ERR"; }
 echo "=== mise.toml ==="
 assert_file_contains "auto_install enabled" "$REPO_ROOT/mise.toml" "auto_install = true"
 assert_file_contains "cmake 3.31" "$REPO_ROOT/mise.toml" 'cmake = "3.31"'
-assert_file_contains "build task runs mac_build.sh" "$REPO_ROOT/mise.toml" "bash scripts/mac_build.sh"
+assert_file_contains "build task runs mac_build.sh" "$REPO_ROOT/mise.toml" 'run = "bash scripts/mac_build.sh"'
+assert_file_contains "build-deps task runs mac_build.sh deps" "$REPO_ROOT/mise.toml" 'run = "bash scripts/mac_build.sh deps"'
 if grep -F -q 'ninja = "latest"' "$REPO_ROOT/mise.toml" 2>/dev/null; then
     fail "ninja is not a build tool"
 else
@@ -126,6 +127,30 @@ add_sentinel
 run_build
 assert_eq "skip-deps exit" "0" "$STATUS"
 assert_eq "skip-deps log" "-s -t 12.0" "$(log_text)"
+
+echo "=== build-deps rebuilds the prefix ==="
+new_fixture
+add_sentinel
+add_dep_tools
+run_build deps
+assert_eq "build-deps exit" "0" "$STATUS"
+assert_eq "build-deps log" "-d -t 12.0" "$(log_text)"
+
+echo "=== build-deps does not build the slicer ==="
+new_fixture
+add_dep_tools
+run_build deps
+assert_eq "build-deps fresh exit" "0" "$STATUS"
+assert_eq "build-deps fresh log" "-d -t 12.0" "$(log_text)"
+
+echo "=== build-deps missing brew tools ==="
+new_fixture
+add_dep_tools
+rm -f "$BIN/yasm"
+run_build deps
+assert_eq "build-deps tools exit" "1" "$STATUS"
+assert_eq "build-deps tools log" "" "$(log_text)"
+assert_eq "build-deps tools stderr" $'error: missing tools: yasm\nInstall them with: brew install yasm' "$(err_text)"
 
 echo "=== missing sentinel builds deps then slicer ==="
 new_fixture

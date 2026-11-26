@@ -1,11 +1,20 @@
 #!/usr/bin/env bash
-# Build Bambu Studio on macOS. Invoked by `mise build`.
+# Build Bambu Studio on macOS. Invoked by `mise build` and `mise build-deps`.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 if [ -n "${MAC_BUILD_ROOT:-}" ]; then
     ROOT="$MAC_BUILD_ROOT"
 fi
+
+target="${1:-slicer}"
+case "$target" in
+    slicer|deps) ;;
+    *)
+        echo "error: unknown build target: ${target} (expected slicer or deps)" >&2
+        exit 1
+        ;;
+esac
 
 os="$(uname -s)"
 if [ "$os" != "Darwin" ]; then
@@ -72,8 +81,8 @@ rewrite_stale_sdk_paths() {
 rewrite_stale_sdk_paths
 
 sentinel="${ROOT}/deps/build/${arch}/BambuStudio_deps/usr/local"
-if [ ! -d "$sentinel" ]; then
-    missing=()
+require_dep_tools() {
+    local missing=()
     require_tool() {
         local bin="$1" formula="$2"
         if ! command -v "$bin" >/dev/null 2>&1; then
@@ -91,6 +100,14 @@ if [ ! -d "$sentinel" ]; then
         echo "Install them with: brew install ${missing[*]}" >&2
         exit 1
     fi
+}
+if [ "$target" = "deps" ]; then
+    require_dep_tools
+    "$ROOT/BuildMac.sh" -d -t 12.0
+    exit 0
+fi
+if [ ! -d "$sentinel" ]; then
+    require_dep_tools
     "$ROOT/BuildMac.sh" -d -t 12.0
 fi
 

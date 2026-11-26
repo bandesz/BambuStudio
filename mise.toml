@@ -12,6 +12,10 @@ cmake = "3.31"
 description = "Build Bambu Studio for this Mac with Xcode and deployment target 12.0. Builds third-party deps when deps/build/<arch>/BambuStudio_deps/usr/local is missing."
 run = "bash scripts/mac_build.sh"
 
+[tasks."build-deps"]
+description = "Rebuild third-party dependencies for this Mac into deps/build/<arch>/BambuStudio_deps with deployment target 12.0. Runs even when that prefix already exists. Does not build Bambu Studio."
+run = "bash scripts/mac_build.sh deps"
+
 [tasks."install-app"]
 description = "Replace /Applications/BambuStudio.app with build/<arch>/BambuStudio/BambuStudio.app. Does not build."
 run = "bash scripts/mac_install_app.sh"
