@@ -815,8 +815,8 @@ ZeroGapContactMask compute_zero_gap_contact_mask(
 // Split each stBottomBridge fill surface into supported (stBottom) / unsupported (stBottomBridge).
 // Only significant contact pieces are promoted; everything else of the original surface stays
 // a single Bridge remainder (slivers are merged back, not left as separate islands).
-// slices are left unchanged.
-void refine_fill_surfaces_for_zero_gap_contact(LayerRegion &layerm, const ExPolygons &mask, float sliver_r)
+// slices are left unchanged. Promoted contact pieces are appended to contact_out when provided.
+void refine_fill_surfaces_for_zero_gap_contact(LayerRegion &layerm, const ExPolygons &mask, float sliver_r, ExPolygons *contact_out)
 {
     if (mask.empty() || sliver_r <= 0.f)
         return;
@@ -847,6 +847,8 @@ void refine_fill_surfaces_for_zero_gap_contact(LayerRegion &layerm, const ExPoly
         // Remainder must be computed before moving promoted polygons.
         ExPolygons remainder = diff_ex(surface.expolygon, promoted);
         for (ExPolygon &expoly : promoted) {
+            if (contact_out)
+                contact_out->push_back(expoly);
             Surface refined(surface, std::move(expoly));
             refined.surface_type = stBottom;
             out.emplace_back(std::move(refined));
@@ -857,6 +859,40 @@ void refine_fill_surfaces_for_zero_gap_contact(LayerRegion &layerm, const ExPoly
     }
 
     layerm.fill_surfaces.surfaces = std::move(out);
+}
+
+// process_external_surfaces() rebuilds the reclassified contact as a plain stBottom, before any
+// bridge angle exists. Mark that area afterwards so it still follows the bridge-bottom pattern.
+// The angle is unused by concentric; 0 only means "this bottom is the support contact".
+void mark_support_contact_bridge_pattern(LayerRegion &layerm, const ExPolygons &contact)
+{
+    if (contact.empty())
+        return;
+
+    Surfaces out;
+    bool     changed = false;
+    out.reserve(layerm.fill_surfaces.surfaces.size());
+    for (const Surface &surface : layerm.fill_surfaces.surfaces) {
+        if (surface.surface_type != stBottom || surface.bridge_angle >= 0.) {
+            out.emplace_back(surface);
+            continue;
+        }
+        ExPolygons hit = intersection_ex(ExPolygons{ surface.expolygon }, contact);
+        if (hit.empty()) {
+            out.emplace_back(surface);
+            continue;
+        }
+        changed = true;
+        for (ExPolygon &expoly : diff_ex(ExPolygons{ surface.expolygon }, hit))
+            out.emplace_back(surface, std::move(expoly));
+        for (ExPolygon &expoly : hit) {
+            Surface marked(surface, std::move(expoly));
+            marked.bridge_angle = 0.;
+            out.emplace_back(std::move(marked));
+        }
+    }
+    if (changed)
+        layerm.fill_surfaces.surfaces = std::move(out);
 }
 
 } // namespace
@@ -933,7 +969,9 @@ void PrintObject::prepare_infill()
     // Zero-gap Normal support: reclassify fill_surfaces that will be carried by the
     // support interface as stBottom, keep true overhangs as stBottomBridge (GitHub #11540).
     // Local masks only; slices stay typed as produced by detect_surfaces_type().
+    std::vector<ExPolygons> support_contact_areas;
     if (m_layers.size() > 1 && should_refine_zero_gap_contact(m_config)) {
+        support_contact_areas.resize(m_layers.size());
         // Both sources must be collected, exactly like SupportAnnotations does: slice_support_*()
         // only sees blocker / enforcer volumes, painted-on-mesh ones arrive as custom facets.
         std::vector<Polygons> blockers = this->slice_support_blockers();
@@ -943,7 +981,7 @@ void PrintObject::prepare_infill()
         BOOST_LOG_TRIVIAL(debug) << "Refining zero-gap support contacts in parallel - start";
         tbb::parallel_for(
             tbb::blocked_range<size_t>(1, m_layers.size()),
-            [this, &blockers, &enforcers](const tbb::blocked_range<size_t> &range) {
+            [this, &blockers, &enforcers, &support_contact_areas](const tbb::blocked_range<size_t> &range) {
                 for (size_t layer_id = range.begin(); layer_id < range.end(); ++ layer_id) {
                     m_print->throw_if_canceled();
                     Layer *layer = m_layers[layer_id];
@@ -952,7 +990,8 @@ void PrintObject::prepare_infill()
                     if (mask.polygons.empty())
                         continue;
                     for (LayerRegion *layerm : layer->m_regions)
-                        refine_fill_surfaces_for_zero_gap_contact(*layerm, mask.polygons, mask.sliver_r);
+                        refine_fill_surfaces_for_zero_gap_contact(*layerm, mask.polygons, mask.sliver_r,
+                            &support_contact_areas[layer_id]);
                 }
             });
         BOOST_LOG_TRIVIAL(debug) << "Refining zero-gap support contacts in parallel - end";
@@ -1052,6 +1091,15 @@ void PrintObject::prepare_infill()
 
     this->discover_sub_top_surfaces();
     m_print->throw_if_canceled();
+
+    // The contact was turned into stBottom for solid speed. Mark it so the final fill still
+    // follows bridge_bottom_surface_pattern.
+    for (size_t layer_id = 1; layer_id < support_contact_areas.size(); ++ layer_id) {
+        if (support_contact_areas[layer_id].empty())
+            continue;
+        for (LayerRegion *layerm : m_layers[layer_id]->m_regions)
+            mark_support_contact_bridge_pattern(*layerm, support_contact_areas[layer_id]);
+    }
 
 #ifdef SLIC3R_DEBUG_SLICE_PROCESSING
     for (size_t region_id = 0; region_id < this->num_printing_regions(); ++ region_id) {

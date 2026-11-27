@@ -307,8 +307,16 @@ std::vector<SurfaceFill> group_fills(const Layer &layer, LockRegionParam &lock_p
 					else if (surface.is_solid_infill())
                         params.pattern = region_config.internal_solid_infill_pattern.value;
                     else if (surface.is_external() && !is_bridge) {
-                        params.pattern = surface.is_top() ? region_config.top_surface_pattern.value : region_config.bottom_surface_pattern.value;
-                        params.density = surface.is_top() ? region_config.top_surface_density.value : region_config.bottom_surface_density.value;
+                        // Zero-gap support turns the contact from stBottomBridge into stBottom so it
+                        // prints at solid speed, and leaves the bridge angle set (GitHub #11540).
+                        // That contact is still the underside over support, so it keeps the bridge pattern.
+                        if (surface.surface_type == stBottom && surface.bridge_angle >= 0.)
+                            params.pattern = infill_for_bridge_bottom(region_config.bridge_bottom_surface_pattern.value,
+                                                                      region_config.top_surface_pattern.value);
+                        else {
+                            params.pattern = surface.is_top() ? region_config.top_surface_pattern.value : region_config.bottom_surface_pattern.value;
+                            params.density = surface.is_top() ? region_config.top_surface_density.value : region_config.bottom_surface_density.value;
+                        }
                     } else if (is_bridge && surface.is_bottom()) {
                         params.pattern = infill_for_bridge_bottom(region_config.bridge_bottom_surface_pattern.value,
                                                                   region_config.top_surface_pattern.value);
