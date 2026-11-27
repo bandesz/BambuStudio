@@ -66,3 +66,22 @@ add_executable(libslic3r_meshboolean_tests cut_mesh_catch_main.cpp test_meshbool
 target_link_libraries(libslic3r_meshboolean_tests PRIVATE test_common libslic3r)
 set_property(TARGET libslic3r_meshboolean_tests PROPERTY FOLDER "tests")
 add_test(NAME libslic3r_meshboolean_tests COMMAND libslic3r_meshboolean_tests "[MeshBoolean]" ${CATCH_EXTRA_ARGS})
+
+# Solid concentric support interface leaves a hole in the middle of each island.
+# Http / nanosvg are referenced by libslic3r but live outside it; same as the other suites.
+add_executable(libslic3r_fill_concentric_tests
+    cut_mesh_catch_main.cpp
+    test_fill_concentric.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/../narrow_bottom_infill/nanosvg_impl.cpp
+    ${PROJECT_SOURCE_DIR}/src/slic3r/Utils/BBLUtil.cpp
+    ${PROJECT_SOURCE_DIR}/src/slic3r/Utils/Http.cpp)
+set_target_properties(libslic3r_fill_concentric_tests PROPERTIES MACOSX_BUNDLE FALSE)
+target_include_directories(libslic3r_fill_concentric_tests PRIVATE
+    ${PROJECT_SOURCE_DIR}/src
+    ${PROJECT_SOURCE_DIR}/src/slic3r
+    ${PROJECT_SOURCE_DIR}/src/slic3r/Utils)
+target_link_libraries(libslic3r_fill_concentric_tests PRIVATE test_common libslic3r
+    libcurl
+    OpenSSL::SSL OpenSSL::Crypto)
+set_property(TARGET libslic3r_fill_concentric_tests PROPERTY FOLDER "tests")
+add_test(NAME libslic3r_fill_concentric_tests COMMAND libslic3r_fill_concentric_tests "[FillConcentric]" ${CATCH_EXTRA_ARGS})

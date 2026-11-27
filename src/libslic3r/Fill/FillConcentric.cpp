@@ -7,6 +7,9 @@
 #include "FillConcentric.hpp"
 #include <libslic3r/ShortestPath.hpp>
 
+#include <algorithm>
+#include <cmath>
+
 namespace Slic3r {
 
 void FillConcentric::_fill_surface_single(
@@ -29,9 +32,135 @@ void FillConcentric::_fill_surface_single(
 
     Polygons   loops = to_polygons(expolygon);
     ExPolygons last { std::move(expolygon) };
-    while (! last.empty()) {
-        last = offset2_ex(last, -(distance + min_spacing/2), +min_spacing/2);
-        append(loops, to_polygons(last));
+    auto region_area = [](const ExPolygons &ex) {
+        double a = 0.;
+        for (const ExPolygon &p : ex)
+            a += p.area();
+        return a;
+    };
+    // A full spacing step keeps one loop per boundary. Breaking a ring into
+    // corner islands, or closing its hole, is not that step.
+    auto same_loops = [&region_area](const ExPolygons &before, const ExPolygons &after) {
+        if (after.size() != before.size() || after.empty())
+            return false;
+        for (size_t i = 0; i < before.size(); ++i)
+            if (after[i].holes.size() != before[i].holes.size())
+                return false;
+        return region_area(after) < region_area(before) - double(SCALED_EPSILON);
+    };
+
+    if (params.density > 0.9999f && distance > 0 && last.size() == 1 && last.front().holes.size() == 1) {
+        // One frame, one spacing. The outer contour and the hole are the two
+        // edges of that frame; both are already in `loops`. Divide the wall
+        // into equal gaps instead of stepping in from each edge and squeezing
+        // the remainder into the middle.
+        const ExPolygon &island = last.front();
+        const float step = float(distance);
+        double width_sum = 0.;
+        for (const Point &p : island.contour.points) {
+            const Point q = island.holes.front().point_projection(p);
+            width_sum += (p - q).cast<double>().norm();
+        }
+        const double width = island.contour.empty() ? double(step) : width_sum / double(island.contour.size());
+        const int intervals = std::max(1, (int) std::lround(width / double(step)));
+        for (int i = 1; i < intervals; ++ i) {
+            const double fraction = double(i) / double(intervals);
+            Polygon middle;
+            middle.points.reserve(island.contour.size());
+            Point previous;
+            bool any = false;
+            for (const Point &p : island.contour.points) {
+                const Point q = island.holes.front().point_projection(p);
+                const Vec2d at = p.cast<double>() + fraction * (q - p).cast<double>();
+                const Point point(coord_t(std::lround(at.x())), coord_t(std::lround(at.y())));
+                if (any && point == previous)
+                    continue;
+                middle.points.emplace_back(point);
+                previous = point;
+                any = true;
+            }
+            if (middle.size() >= 3)
+                loops.emplace_back(std::move(middle));
+        }
+    } else if (params.density > 0.9999f && distance > 0) {
+        // Solid island. Inset by one spacing until the core is thinner than
+        // that, then close the center.
+        const float step = float(distance);
+        // Distance from the boundary to the middle of `region`: the largest
+        // inset that still has one loop per boundary.
+        auto middle_inset = [&same_loops](const ExPolygons &region, float limit) {
+            float lo = 0.f;
+            float hi = limit;
+            for (int i = 0; i < 16; ++i) {
+                const float mid = (lo + hi) / 2.f;
+                if (same_loops(region, offset_ex(region, -mid)))
+                    lo = mid;
+                else
+                    hi = mid;
+            }
+            return lo;
+        };
+        auto emit_middle_loop = [&](const ExPolygons &region) {
+            for (const ExPolygon &island : region) {
+                if (island.holes.size() != 1) {
+                    // Solid core. One last ring around the middle.
+                    const float inset = middle_inset(ExPolygons{ island }, step * 2.f);
+                    if (inset <= step / 2.f)
+                        continue;
+                    const float backoff = float(scale_(0.02));
+                    const float used = inset > backoff ? inset - backoff : inset;
+                    for (const ExPolygon &core : offset_ex(island, -used))
+                        loops.emplace_back(core.contour);
+                    continue;
+                }
+                // Frame. The two boundaries are already rings. Split whatever
+                // width is left into the same spacing, each piece one closed
+                // loop that follows both the outside and the hole.
+                double widest = 0.;
+                for (const Point &p : island.contour.points) {
+                    const Point q = island.holes.front().point_projection(p);
+                    widest = std::max(widest, (p - q).cast<double>().norm());
+                }
+                const int intervals = std::max(1, (int) std::ceil(widest / double(step)));
+                for (int i = 1; i < intervals; ++i) {
+                    const double fraction = double(i) / double(intervals);
+                    Polygon middle;
+                    middle.points.reserve(island.contour.size());
+                    Point previous;
+                    bool any = false;
+                    for (const Point &p : island.contour.points) {
+                        const Point q = island.holes.front().point_projection(p);
+                        const Vec2d at = p.cast<double>() + fraction * (q - p).cast<double>();
+                        const Point point(coord_t(std::lround(at.x())), coord_t(std::lround(at.y())));
+                        if (any && point == previous)
+                            continue;
+                        middle.points.emplace_back(point);
+                        previous = point;
+                        any = true;
+                    }
+                    if (middle.size() >= 3)
+                        loops.emplace_back(std::move(middle));
+                }
+            }
+        };
+        for (int guard = 0; guard < 10000 && ! last.empty(); ++ guard) {
+            ExPolygons next = offset_ex(last, -step);
+            const bool has_hole = std::any_of(last.begin(), last.end(), [](const ExPolygon &p) { return ! p.holes.empty(); });
+            // A frame thinner than two spacings still insets, but the new
+            // outer loop and the new hole loop are the same centerline.
+            const bool collapsed_frame = has_hole && same_loops(last, next) && middle_inset(next, step) < step / 2.f;
+            if (! same_loops(last, next) || collapsed_frame) {
+                emit_middle_loop(last);
+                break;
+            }
+            append(loops, to_polygons(next));
+            last = std::move(next);
+        }
+    } else {
+        while (! last.empty()) {
+            last = offset2_ex(last, -(distance + min_spacing/2), +min_spacing/2);
+            append(loops, to_polygons(last));
+        }
     }
 
     // generate paths from the outermost to the innermost, to avoid
